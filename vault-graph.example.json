@@ -1,0 +1,46 @@
+{
+  "_comment": "Copy to <your vault>/vault-graph.json and keep only the keys you change. Every key is optional; the values below are the defaults unless noted. Keys starting with _ are ignored.",
+
+  "port": 8765,
+  "_port": "Local UI server port (127.0.0.1 only). The VAULT_GRAPH_PORT environment variable overrides it.",
+
+  "board": "_global/now.md",
+  "repos_dir": "repos",
+  "global_dir": "_global",
+
+  "entity_patterns": [
+    "\\b[A-Z][A-Z0-9]+-\\d+\\b",
+    "(?<=github\\.com/)[A-Za-z0-9-]+/[A-Za-z0-9._-]*[A-Za-z0-9]"
+  ],
+  "_entity_patterns": "Python regexes. Every match becomes an entity star shared by the notes that mention it. Defaults: issue keys like ABC-123, and owner/repo from github.com links.",
+  "entity_ignore": ["UTF-8", "UTF-16", "SHA-1", "SHA-256", "SHA-512", "ISO-8601"],
+
+  "auto_memory": {
+    "import": true,
+    "strip_prefixes": ["code-"],
+    "map": {"acme-api": "acme-api", "scratch": null},
+    "unmapped": "_inbox",
+    "skip": []
+  },
+  "_auto_memory": "`sync` copies Claude Code auto-memory (~/.claude/projects/*/memory/*.md) into the vault. A project folder name like C--Users-alex-code-acme-api becomes code-acme-api, then strip_prefixes turns it into acme-api. map sends it to <repos_dir>/<value>/memory; null skips that project. unmapped: \"_inbox\" (default), \"own\" (use the name as the repo folder) or \"skip\". skip: note names never to import again. Defaults: strip_prefixes [], map {}.",
+
+  "hook": {"matches": 3},
+
+  "launcher": {
+    "permission_mode": "default",
+    "cwd": "",
+    "wmux": ""
+  },
+  "_launcher": "Do it in Claude. permission_mode: default | acceptEdits | plan | bypassPermissions. bypassPermissions lets the launched session run every tool without asking; only use it if you accept that. cwd: folder for new sessions (default: the vault). wmux: path to the wmux CLI if it is not found automatically.",
+
+  "plan_usage": false,
+  "_plan_usage": "Opt-in. true shows plan limits (5-hour and weekly %) in the top bar, read from an undocumented Anthropic endpoint with your local Claude Code sign-in. See the README before turning it on.",
+  "local_usage": true,
+
+  "idle_shutdown": 1800,
+
+  "daily": [
+    {"name": "open PRs", "cmd": "gh pr list --author @me --state open", "cwd": "~/code/acme-api", "timeout": 120}
+  ],
+  "_daily": "Commands for `vault.py daily`. The last 10 output lines of each are kept in graph/daily.json, and the prompt hook shows them once a day. Default: [] (off). cmd is a string (run by your shell) or a list (run directly). cwd is relative to the vault unless absolute or ~."
+}

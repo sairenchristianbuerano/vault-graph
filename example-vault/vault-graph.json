@@ -1,0 +1,5 @@
+{
+  "_comment": "Demo settings. Port 8766 so the demo never collides with your own vault on 8765. Auto-memory import is off so your real Claude memories never land in the demo.",
+  "port": 8766,
+  "auto_memory": {"import": false}
+}
