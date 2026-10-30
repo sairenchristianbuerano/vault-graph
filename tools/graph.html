@@ -484,6 +484,39 @@ function draw(t) {
   if (catFocus && !pinned) drawCat(t);
   if (pinned) drawSelection(t);
   drawActive(t);
+  drawFrame(t);
+}
+
+// glowing frame round the graph: steady when Claude is idle, rolling "mountain" waves when it works;
+// colour = 5-hour plan usage (green < 70%, yellow 70-89%, red 90%+), same scale as the top bar
+let planPct = null;
+function drawFrame(t) {
+  const lg = document.getElementById('log'), info = document.getElementById('info'), wide = innerWidth > 900;
+  const x0 = (wide ? document.getElementById('board').getBoundingClientRect().right : 0) + 8, y0 = topH() + 6;
+  const x1 = W - (wide && info.style.display === 'block' ? info.offsetWidth : 0) - 8, y1 = H - lg.offsetHeight - 18;
+  if (x1 - x0 < 80 || y1 - y0 < 80) return;
+  const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : planPct >= 90 ? '255,90,90' : planPct >= 70 ? '230,200,80' : '79,192,141';
+  const m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
+  const busy = !still && m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < 20;
+  cx.save(); cx.lineJoin = 'round'; cx.strokeStyle = `rgba(${rgb},${busy ? .75 : .5})`; cx.shadowColor = `rgba(${rgb},1)`;
+  if (!busy) {  // idle: a calm, steady glow
+    cx.lineWidth = 2; cx.shadowBlur = 16;
+    cx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  } else {      // working: peaks roll round the edge while the whole glow breathes high and low
+    const amp = 7 + 5 * Math.sin(t * 2.2), step = 6;
+    const off = s => amp * Math.pow(Math.max(0, Math.sin(s / 38 - t * 3.2)), 1.6) + 1.5 * Math.sin(s / 11 + t * 5);
+    const edges = [[x0, y0, x1, y0, 0, -1], [x1, y0, x1, y1, 1, 0], [x1, y1, x0, y1, 0, 1], [x0, y1, x0, y0, -1, 0]];
+    let s = 0; cx.beginPath();
+    for (const [ax, ay, bx, by, nx, ny] of edges) {
+      const len = Math.hypot(bx - ax, by - ay);
+      for (let d = 0; d <= len; d += step, s += step) {
+        const f = d / len, o = off(s), px = ax + (bx - ax) * f + nx * o, py = ay + (by - ay) * f + ny * o;
+        s === 0 ? cx.moveTo(px, py) : cx.lineTo(px, py);
+      }
+    }
+    cx.closePath(); cx.lineWidth = 2.2; cx.shadowBlur = 18 + 14 * (.5 + .5 * Math.sin(t * 2.2)); cx.stroke();
+  }
+  cx.restore();
 }
 
 function drawMain(t) {
@@ -828,6 +861,7 @@ const fmtTok = n => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6)
 function renderUsage(u) {
   const el = document.getElementById('usage');
   if (!u || !u.scanned) { el.textContent = 'usage: counting…'; return; }
+  planPct = u.plan?.five_hour?.pct ?? null;
   el.innerHTML = '';
   const part = (label, n, pct) => {
     const s = document.createElement('span'); s.className = 'u';
