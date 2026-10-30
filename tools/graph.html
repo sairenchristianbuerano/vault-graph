@@ -498,29 +498,37 @@ function drawFrame(t) {
   const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : planPct >= 90 ? '255,90,90' : planPct >= 70 ? '230,200,80' : '79,192,141';
   const m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
   const busy = !still && m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < 20;
-  // each edge is a light streak: white-hot core in the middle fading to nothing at both ends, coloured glow round it
-  const amp = 7 + 5 * Math.sin(t * 2.2), breathe = busy ? .5 + .5 * Math.sin(t * 2.2) : .5;
-  const off = s => busy ? amp * Math.pow(Math.max(0, Math.sin(s / 38 - t * 3.2)), 1.6) + 1.5 * Math.sin(s / 11 + t * 5) : 0;
-  const edges = [[x0, y0, x1, y0, 0, -1], [x1, y0, x1, y1, 1, 0], [x1, y1, x0, y1, 0, 1], [x0, y1, x0, y0, -1, 0]];
-  cx.save(); cx.lineJoin = cx.lineCap = 'round';
+  // each edge is a light bar: white-hot core fading out at both ends, light spilling inward onto the graph.
+  // working: the spill swells into smooth rolling "mountains" and the whole frame breathes
+  const breathe = busy ? .5 + .5 * Math.sin(t * 1.8) : .5, H0 = busy ? 16 + 10 * breathe : 12;
+  const edges = [[x0, y0, x1, y0, 0, 1], [x1, y0, x1, y1, -1, 0], [x1, y1, x0, y1, 0, -1], [x0, y1, x0, y0, 1, 0]];
+  cx.save(); cx.globalCompositeOperation = 'lighter'; cx.lineCap = 'round';
   let s = 0;
   edges.forEach(([ax, ay, bx, by, nx, ny], i) => {
-    const len = Math.hypot(bx - ax, by - ay), s0 = s;
-    const c = busy ? .5 + .3 * Math.sin(t * 1.3 + i * 1.6) : .5;  // busy: the hot spot drifts along the edge
-    const grad = a => {
+    const len = Math.hypot(bx - ax, by - ay), pts = [];
+    for (let d = 0; d <= len; d += Math.min(8, len)) {
+      const f = d / len, u = s + d, taper = Math.pow(Math.sin(Math.PI * f), .7);
+      const w1 = .5 + .5 * Math.sin(u / 110 - t * 2.2), w2 = .5 + .5 * Math.sin(u / 47 + t * 1.3);
+      pts.push([ax + (bx - ax) * f, ay + (by - ay) * f, H0 * taper * (busy ? .3 + .5 * w1 * w1 + .2 * w2 : 1)]);
+    }
+    s += len;
+    const sp = cx.createLinearGradient(ax, ay, ax + nx * H0, ay + ny * H0);  // light spill, soft-edged with a blur
+    sp.addColorStop(0, `rgba(${rgb},${.16 + .12 * breathe})`); sp.addColorStop(.35, `rgba(${rgb},${.06 + .05 * breathe})`); sp.addColorStop(1, `rgba(${rgb},0)`);
+    cx.beginPath(); pts.forEach(([x, y], k) => k ? cx.lineTo(x, y) : cx.moveTo(x, y));
+    for (let k = pts.length - 1; k >= 0; k--) cx.lineTo(pts[k][0] + nx * pts[k][2], pts[k][1] + ny * pts[k][2]);
+    cx.closePath(); cx.filter = 'blur(4px)'; cx.fillStyle = sp; cx.fill(); cx.filter = 'none';
+    const c = busy ? .5 + .25 * Math.sin(t * 1.1 + i * 1.6) : .5;  // working: the hot spot drifts along the bar
+    const bar = a => {
       const g = cx.createLinearGradient(ax, ay, bx, by);
-      g.addColorStop(0, `rgba(${a},0)`); g.addColorStop(Math.max(.05, c - .35), `rgba(${a},.25)`);
-      g.addColorStop(c, `rgba(${a},1)`); g.addColorStop(Math.min(.95, c + .35), `rgba(${a},.25)`); g.addColorStop(1, `rgba(${a},0)`);
+      g.addColorStop(0, `rgba(${a},0)`); g.addColorStop(Math.max(.08, c - .38), `rgba(${a},.25)`); g.addColorStop(c, `rgba(${a},1)`);
+      g.addColorStop(Math.min(.92, c + .38), `rgba(${a},.25)`); g.addColorStop(1, `rgba(${a},0)`);
       return g;
     };
-    cx.beginPath();
-    for (let d = 0; d <= len; d += 6, s += 6) {
-      const f = d / len, o = off(s), px = ax + (bx - ax) * f + nx * o, py = ay + (by - ay) * f + ny * o;
-      s === s0 ? cx.moveTo(px, py) : cx.lineTo(px, py);
-    }
-    cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 18 + 16 * breathe;
-    cx.strokeStyle = grad(rgb); cx.globalAlpha = .55 + .35 * breathe; cx.lineWidth = 5; cx.stroke();  // coloured glow
-    cx.shadowBlur = 8; cx.strokeStyle = grad('255,255,255'); cx.globalAlpha = .7 + .3 * breathe; cx.lineWidth = 1.4; cx.stroke();  // white core
+    cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(bx, by);
+    cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 10 + 8 * breathe;
+    cx.globalAlpha = .45 + .3 * breathe; cx.strokeStyle = bar(rgb); cx.lineWidth = 2; cx.stroke();          // coloured glow
+    cx.shadowBlur = 4; cx.globalAlpha = .85 + .15 * breathe; cx.strokeStyle = bar('255,255,255'); cx.lineWidth = 1.3; cx.stroke();  // white core
+    cx.globalAlpha = 1; cx.shadowBlur = 0;
   });
   cx.restore();
 }
