@@ -188,6 +188,7 @@
   <button id="zout" title="Zoom out (-)">−</button>
   <button id="zfit" title="Fit whole graph (f)">fit</button>
   <button id="zhi" title="Zoom to highlight (h)">◎</button>
+  <button id="zmain" title="Zoom to Claude (main) and what it is working on (m)" style="color:rgb(255,110,170)">●</button>
 </div>
 <script>
 const cv = document.getElementById('c'), cx = cv.getContext('2d');
@@ -786,9 +787,13 @@ document.getElementById('zin').onclick = () => zoomAt(1.3);
 document.getElementById('zout').onclick = () => zoomAt(1 / 1.3);
 document.getElementById('zfit').onclick = () => { touched = true; fitAll(); };
 document.getElementById('zhi').onclick = () => { touched = false; select(null); fitHighlight(); };
+const fitMain = () => { touched = true; select(null); fitTo([MAIN, ...mainTouched], 2.5); };  // main star + the notes it works on
+document.getElementById('zmain').onclick = fitMain;
 addEventListener('keydown', e => {
+  if (e.target.closest?.('input, textarea')) return;  // typing in the task search or a note is not a shortcut
   if (e.key === 'f') { touched = true; fitAll(); }
   if (e.key === 'h') { touched = false; select(null); fitHighlight(); }
+  if (e.key === 'm') fitMain();
   if (e.key === '+' || e.key === '=') zoomAt(1.3);
   if (e.key === '-') zoomAt(1 / 1.3);
   if (e.key === 'Escape') { showCat(null); select(null); }
