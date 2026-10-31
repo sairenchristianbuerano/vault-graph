@@ -30,6 +30,7 @@
   #info button.nb:hover { border-left-color:rgb(var(--hi)); color:rgb(var(--hi)); }
   #info button.nb.task { word-break:normal; overflow-wrap:anywhere; margin-top:4px; }
   #info .prog { margin:2px 0 8px 10px; }
+  #zmain.on { border-color:rgb(255,110,170); box-shadow:0 0 10px rgba(255,110,170,.7); }
   #info code { display:block; background:#0e1c18; border:1px solid var(--line); padding:6px 8px; border-radius:4px; word-break:break-all; user-select:all; }
   #info .x { position:absolute; top:10px; right:12px; background:none; border:0; color:var(--muted); font-size:18px; cursor:pointer; }
   @media (max-width:640px) { #info { width:auto; left:0; top:auto; height:48vh; border-left:0; border-top:1px solid var(--line); } #legend { display:none; } }
@@ -188,7 +189,7 @@
   <button id="zout" title="Zoom out (-)">−</button>
   <button id="zfit" title="Fit whole graph (f)">fit</button>
   <button id="zhi" title="Zoom to highlight (h)">◎</button>
-  <button id="zmain" title="Zoom to Claude (main) and what it is working on (m)" style="color:rgb(255,110,170)">●</button>
+  <button id="zmain" title="Follow Claude (main): zoom to it and what it is working on, and keep the camera on it as it moves (m). Click again, drag the map, or pick another star to stop." style="color:rgb(255,110,170)">●</button>
 </div>
 <script>
 const cv = document.getElementById('c'), cx = cv.getContext('2d');
@@ -210,6 +211,7 @@ const CAT = {
 const MAIN = { id: 'main', kind: 'main', cat: 'main', repo: '-', desc: 'This Claude session. It drifts toward the notes it is working on; the lines show what it touched last.',
                p: { x: 0, y: 0 }, d: { x: 0, y: 0 }, deg: 0, ph: 0, sp: 1 };
 let mainTouched = [], workingOn = {};
+let touchTs = {}, linkAnim = {};  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
 const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
 let W = 0, H = 0, dpr = window.devicePixelRatio || 1;
@@ -400,9 +402,11 @@ function layout(iters) {
 
 const ease = u => u < .5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
 let cam = null; const morph = { t0: 0, dur: 1100 };
+let follow = false, followAt = null;  // camera follows the main star (the ● button)
+function setFollow(on) { follow = on; followAt = null; document.getElementById('zmain').classList.toggle('on', on); }
 function animateTo(goal, instant) {
   if (still || instant) { Object.assign(view, goal); cam = null; return frame(); }
-  cam = { from: { ...view }, to: goal, t0: performance.now(), dur: 1000 };
+  cam = { from: { ...view }, to: goal, t0: performance.now(), dur: 1000 }; followAt = null;
 }
 function tick(now) {
   if (cam) {
@@ -419,11 +423,17 @@ function tick(now) {
     MAIN.d.x += (cxw - MAIN.d.x) * f; MAIN.d.y += (cyw - MAIN.d.y) * f;
     MAIN.p.x = MAIN.d.x; MAIN.p.y = MAIN.d.y;
   }
+  if (follow && !cam && nodes.length) {  // follow mode: keep the main star where it sat on screen when the zoom ended
+    const [sx, sy] = S(MAIN.d);
+    if (!followAt) followAt = [sx, sy];
+    view.x += followAt[0] - sx; view.y += followAt[1] - sy;  // rigid: the star itself already moves smoothly
+  }
   const e = still ? 1 : ease(Math.min(1, (now - morph.t0) / morph.dur));
   for (const n of nodes) { n.d.x = n.from.x + (n.p.x - n.from.x) * e; n.d.y = n.from.y + (n.p.y - n.from.y) * e; }
 }
 
 function fitTo(list, maxK, instant) {
+  setFollow(false);
   if (!list.length) return frame();
   const xs = list.map(n => n.p.x), ys = list.map(n => n.p.y);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -452,9 +462,14 @@ function star(n, x, y, tw, boost) {
   const g = cx.createRadialGradient(x, y, 0, x, y, r * halo);
   g.addColorStop(0, `rgba(${rgb},${(.25 + .25 * tw) * (boost ? 1.6 : 1)})`); g.addColorStop(1, `rgba(${rgb},0)`);
   cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, r * halo, 0, 6.3); cx.fill();
-  cx.fillStyle = `rgba(${rgb},${boost ? 1 : .55 + .45 * tw})`; cx.beginPath();
-  if (c.sides) poly(c.sides, (cs, sn) => cx.lineTo(x + r * 1.4 * cs, y + r * 1.4 * sn)); else cx.arc(x, y, r, 0, 6.3);  // polygons a bit bigger so they read as big as a circle
-  cx.fill();
+  cx.fillStyle = `rgba(${rgb},${boost ? 1 : .55 + .45 * tw})`; shapePath(n.cat, x, y, r); cx.fill();
+}
+// outline of a star's kind, as a new path: polygon for agents, skills and entities (a bit bigger, so it reads as
+// big as a circle), circle otherwise. Stars, work rings and landing pulses all use it, so shapes stay recognisable
+function shapePath(cat, x, y, r) {
+  const s = CAT[cat]?.sides;
+  cx.beginPath();
+  if (s) { poly(s, (cs, sn) => cx.lineTo(x + r * 1.4 * cs, y + r * 1.4 * sn)); cx.closePath(); } else cx.arc(x, y, r, 0, 6.3);
 }
 
 // the visible graph area: right of the task board, left of the info panel, between the top bar and the log
@@ -524,7 +539,7 @@ function draw(t) {
   cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.fillStyle = '#d9e6e0';
   for (const n of nodes) {
     const show = hiN.has(n.id) || n === hover || (view.k > 1.8 && n.kind === 'note');
-    if (!show || (pinned && n !== hover)) continue;
+    if (!show || (pinned && n !== hover) || ((n.cat === 'agent' || n.cat === 'skill') && active[label(n.id)])) continue;  // working ones have their own label
     const [x, y] = S(n.d);
     cx.fillText(label(n.id), x, y + (hiN.has(n.id) ? 24 : -10));
   }
@@ -605,15 +620,29 @@ function drawWork(who, x, y, r, rgb, list, busy, pulse, t) {
   let ax = x, ay = y;  // lines start at the actor, or at its own edge marker when the actor is off-screen
   const away = !inside(x, y);
   if (away) { const cx0 = (vr.x0 + vr.x1) / 2, cy0 = (vr.y0 + vr.y1) / 2; [ax, ay] = edge(cx0, cy0, x, y); }
+  const wk = who === MAIN ? 'main' : label(who.id);
   for (const n of list) {
     let [nx, ny] = S(n.d);
     const off = !inside(nx, ny);
     if (off && away) continue;  // both ends off-screen: nothing to show
     if (off) [nx, ny] = edge(x, y, nx, ny);
+    // each new tool call on a note draws the line out to it with a bright head, then a ring where it lands
+    const age = (performance.now() - (linkAnim[wk + '|' + n.id] ?? -1e9)) / 1000, grow = still ? 1 : ease(Math.max(0, Math.min(1, age / .6)));
+    const gx = ax + (nx - ax) * grow, gy = ay + (ny - ay) * grow;
     const g = cx.createLinearGradient(ax, ay, nx, ny);
     g.addColorStop(0, `rgba(${rgb},${.5 + .3 * pulse})`); g.addColorStop(1, `rgba(${rgb},${off ? .55 : .12})`);
     cx.strokeStyle = g; cx.lineWidth = 1.2;
-    cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(nx, ny); cx.stroke();
+    cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(gx, gy); cx.stroke();
+    if (grow < 1) {
+      cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 12; cx.fillStyle = '#fff';
+      cx.beginPath(); cx.arc(gx, gy, 3, 0, 6.3); cx.fill(); cx.shadowBlur = 0;
+      continue;
+    }
+    if (!off && age < 1.4) {
+      const f = (age - .6) / .8;
+      cx.strokeStyle = `rgba(${rgb},${(1 - f) * .9})`; cx.lineWidth = 2;
+      shapePath(n.cat, nx, ny, radius(n) + 4 + f * 26); cx.stroke();
+    }
     if (off) { const [sx, sy] = S(n.d); pin(nx, ny, Math.atan2(sy - y, sx - x), label(n.id), n); }
     else { cx.textAlign = 'center'; text(label(n.id), nx, ny + radius(n) + 16); }
   }
@@ -622,7 +651,7 @@ function drawWork(who, x, y, r, rgb, list, busy, pulse, t) {
   if (busy && !still) for (let i = 0; i < 2; i++) {
     const f = (t * .7 + i / 2) % 1;
     cx.strokeStyle = `rgba(${rgb},${(1 - f) * .7})`; cx.lineWidth = 2;
-    cx.beginPath(); cx.arc(x, y, r + 6 + f * 46, 0, 6.3); cx.stroke();
+    shapePath(who.cat, x, y, r + 6 + f * 46); cx.stroke();  // rings in the actor's own shape
   }
 }
 
@@ -649,7 +678,7 @@ function drawActive(t) {
     drawWork(n, x, y, r, rgb, workingOn[label(n.id)] || [], true, pulse, t);
     cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
     star(n, x, y, .7 + .3 * pulse, true); cx.restore();
-    cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, r * .35, 0, 6.3); cx.fill();
+    cx.fillStyle = '#fff'; shapePath(n.cat, x, y, r * .35); cx.fill();
     cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
     cx.fillText(label(n.id) + (a.kind === 'agent' ? ' · working' : ' · in use'), x, y - r - 30);
     if (a.desc && a.kind === 'agent') { cx.font = '13px ui-monospace, Consolas, monospace'; cx.fillStyle = '#c9d8d1'; cx.fillText(a.desc, x, y - r - 14); }
@@ -680,7 +709,7 @@ function drawSelection(t) {
   star(pinned, px, py, 1, true);
   cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 18;
   cx.strokeStyle = `rgba(${rgb},.95)`; cx.lineWidth = 2;
-  cx.beginPath(); cx.arc(px, py, r, 0, 6.3); cx.stroke(); cx.restore();
+  shapePath(pinned.cat, px, py, r); cx.stroke(); cx.restore();
   cx.font = 'bold 15px ui-monospace, Consolas, monospace'; cx.fillStyle = '#ffffff';
   cx.fillText(label(pinned.id), px, py + r + 16);
 }
@@ -693,6 +722,7 @@ function el(tag, text, cls) { const d = document.createElement(tag); if (text !=
 
 function select(n, center = true, instant = false) {
   pinned = n;
+  if (n && n !== MAIN && follow) setFollow(false);
   if (n && catFocus) { catFocus = null; markLegend(); }
   const box = document.getElementById('info');
   document.body.classList.toggle('sel', !!n);
@@ -749,7 +779,7 @@ function nearest(mx, my) {
   return best;
 }
 function zoomAt(f, mx = W / 2, my = H / 2) {
-  cam = null;
+  cam = null; followAt = null;  // still following after a zoom, from the new spot
   const ox = mx - W / 2, oy = my - H / 2;
   view.x = ox - (ox - view.x) * f; view.y = oy - (oy - view.y) * f; view.k *= f;
   touched = true; frame();
@@ -771,7 +801,7 @@ cv.addEventListener('pointermove', e => {
   }
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; touched = true; }
+    if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; touched = true; if (follow) setFollow(false); }
     view.x = drag.vx + dx; view.y = drag.vy + dy; frame(); return;
   }
   const n = nearest(e.clientX, e.clientY);
@@ -787,7 +817,7 @@ document.getElementById('zin').onclick = () => zoomAt(1.3);
 document.getElementById('zout').onclick = () => zoomAt(1 / 1.3);
 document.getElementById('zfit').onclick = () => { touched = true; fitAll(); };
 document.getElementById('zhi').onclick = () => { touched = false; select(null); fitHighlight(); };
-const fitMain = () => { touched = true; select(null); fitTo([MAIN, ...mainTouched], 2.5); };  // main star + the notes it works on
+const fitMain = () => { if (follow) return setFollow(false); touched = true; select(null); fitTo([MAIN, ...mainTouched], 2.5); setFollow(true); };  // zoom to main + what it works on, then follow it
 document.getElementById('zmain').onclick = fitMain;
 addEventListener('keydown', e => {
   if (e.target.closest?.('input, textarea')) return;  // typing in the task search or a note is not a shortcut
@@ -844,6 +874,8 @@ function renderLog(log, now) {
   for (const e of [...log].reverse()) {
     const n = nodeFromText(e.detail), list = workingOn[e.who] ||= [];
     if (n && list.length < 6 && !list.includes(n)) list.push(n);
+    const k = n && e.who + '|' + n.id;  // a new tool call on this note replays the connect animation
+    if (k && !(touchTs[k] >= e.ts)) { touchTs[k] = e.ts; linkAnim[k] = performance.now(); }
   }
   mainTouched = workingOn.main || [];
   const chip = (text, cls, who) => {
