@@ -205,7 +205,7 @@ const HI = '79,192,141', EDGE = '120,160,145', BG = '#0b1512';
 // relying on colour; notes stay round
 const CAT = {
   agent:  { rgb: '180,140,255', name: 'agent', sides: 4 },
-  subagent: { rgb: '70,225,215', name: 'subagent', sides: 4 },  // an agent another agent started: same shape, own colour
+  subagent: { rgb: '70,225,215', name: 'subagent', sides: 4 },  // a running agent, started by Claude or by another agent: same shape, own colour
   skill:  { rgb: '240,184,90',  name: 'skill', sides: 3 },
   memory: { rgb: '111,183,232', name: 'memory' },
   work:   { rgb: '150,185,170', name: 'work' },
@@ -278,7 +278,7 @@ function legend() {
     if (c.sides) { dot.style.borderRadius = '0'; dot.style.clipPath = `polygon(${poly(c.sides, (cs, sn) => `${50 + 50 * cs}% ${50 + 50 * sn}%`)})`; }
     d.appendChild(dot); d.appendChild(document.createTextNode(counts[k] ? `${c.name} (${counts[k]})` : c.name)); el.appendChild(d);
     d.dataset.cat = k; d.onclick = () => showCat(catFocus === k ? null : k);
-    if (k === 'subagent') d.onclick = () => { const s = Object.keys(active).find(n => active[n].parent && active[n].parent !== 'main'); if (s) focusWho(s, lastLog); };
+    if (k === 'subagent') d.onclick = () => { const s = Object.keys(active).find(n => active[n].kind === 'agent'); if (s) focusWho(s, lastLog); };
   }
   { const d = document.createElement('div'), dot = document.createElement('i');
     dot.style.background = dot.style.color = `rgb(${CAT.main.rgb})`; dot.style.width = dot.style.height = '12px';
@@ -725,7 +725,7 @@ function agentAt(name, depth = 0) {
 function drawActive(t) {
   for (const [name, a] of Object.entries(active)) {
     if (a.kind === 'skill' && !nodes.some(n => n.cat === 'skill' && label(n.id) === name)) continue;  // plugin skills: no star
-    const sub = a.kind === 'agent' && a.parent && a.parent !== 'main', at = agentAt(name), [x, y] = at.xy;
+    const sub = a.kind === 'agent', at = agentAt(name), [x, y] = at.xy;  // anything the Agent tool started is a subagent
     const n = sub ? { ...at.n, cat: 'subagent' } : at.n, rgb = CAT[n.cat].rgb, r = radius(n);
     const pulse = still ? .6 : (Math.sin(t * 4) + 1) / 2;
     if (a.kind === 'agent') {  // dashed line from whoever started it, dashes flowing toward the agent
@@ -740,7 +740,7 @@ function drawActive(t) {
     cx.fillStyle = '#fff'; shapePath(n.cat, x, y, r * .35); cx.fill();
     cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
     cx.fillText(name + (a.kind === 'agent' ? ' · working' : ' · in use'), x, y - r - 30);
-    const sub2 = sub ? `spawned by ${a.parent}` + (a.desc ? ' · ' : '') : '';  // who started it
+    const sub2 = sub && a.parent ? `spawned by ${a.parent === 'main' ? 'Claude (main)' : a.parent}` + (a.desc ? ' · ' : '') : '';  // who started it
     if (sub2 || (a.desc && a.kind === 'agent')) { cx.font = '13px ui-monospace, Consolas, monospace'; cx.fillStyle = '#c9d8d1'; cx.fillText(sub2 + (a.desc || ''), x, y - r - 14); }
   }
 }
@@ -911,10 +911,13 @@ addEventListener('resize', resize);
 function nodeFromText(text) {
   if (!text) return null;
   const links = [...text.matchAll(/\[\[([^\]|#]+)/g)].map(m => m[1].trim().toLowerCase());
-  const words = (links.length ? links : text.split(/[\s/\\:,()`'"]+/)).map(w => w.toLowerCase().replace(/\.md$/, ''));
-  for (const w of words) {
+  const plain = !links.length, toks = plain ? text.split(/[\s/\\:,()`'"]+/) : links;
+  for (const t of toks) {
+    const w = t.toLowerCase().replace(/\.md$/, '');
     if (w.length < 3) continue;
-    const n = nodes.find(n => label(n.id).toLowerCase() === w || n.id.toLowerCase() === w);
+    // ALL-CAPS notes (AGENT, README, STATUS) are everyday words too: in plain text only their exact spelling counts
+    const n = nodes.find(n => { const l = label(n.id);
+      return n.id.toLowerCase() === w || (l.toLowerCase() === w && (!plain || l !== l.toUpperCase() || t.replace(/\.md$/i, '') === l)); });
     if (n) return n;
   }
   return null;
@@ -934,7 +937,7 @@ let lastLog = [];
 // same colour everywhere for one actor: main = rose star, agents = purple, skills = amber
 const actorColor = who => {
   if (who === 'main') return `rgb(${CAT.main.rgb})`;
-  if (active[who]?.parent && active[who].parent !== 'main') return `rgb(${CAT.subagent.rgb})`;
+  if (active[who]?.kind === 'agent') return `rgb(${CAT.subagent.rgb})`;
   const n = nodes.find(n => (n.cat === 'agent' || n.cat === 'skill') && label(n.id) === who);
   return `rgb(${CAT[n ? n.cat : 'agent'].rgb})`;
 };
@@ -974,7 +977,7 @@ function renderLog(log, now) {
   for (const [name, a] of Object.entries(active)) {
     if (a.kind !== 'agent') continue;
     const seen = Math.max(a.since, (last[name] || {}).ts || 0), quiet = Math.round(now - seen);
-    const by = a.parent && a.parent !== 'main' ? ` (by ${a.parent})` : '';
+    const by = a.parent ? ` (by ${a.parent})` : '';
     chip(quiet < BUSY_CAP ? `${name}${by} working` : `${name}${by} quiet ${quiet}s`, quiet < BUSY_CAP ? 'working' : 'quiet', name);
   }
   for (const e of log.slice(-30)) if (e.what === 'done' && !active[e.who] && now - e.ts < 300) chip(`${e.who} done ✓`, 'done', e.who);
