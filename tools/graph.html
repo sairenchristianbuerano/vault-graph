@@ -209,6 +209,15 @@ const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) 
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
 let W = 0, H = 0, dpr = window.devicePixelRatio || 1;
 let nodes = [], edges = [], byId = {}, pos = {}, hiN = new Set(), hiE = new Set();
+// "new since last build" glows for this long after it appeared, then the graph goes quiet
+const HIGHLIGHT_HOURS = 2;
+let hiUntil = 0;
+function expireHighlight() {
+  if (!hiN.size || Date.now() < hiUntil) return;
+  hiN = new Set(); hiE = new Set(); edges.forEach(e => e.hi = false);
+  document.getElementById('reason').textContent = 'No new links in the last ' + HIGHLIGHT_HOURS + ' h';
+}
+setInterval(expireHighlight, 60000);
 let restore = null;
 try { restore = JSON.parse(sessionStorage.getItem('vaultGraph') || 'null'); sessionStorage.removeItem('vaultGraph'); } catch (e) {}
 let active = {};  // name -> {kind, since, desc} from the agent/skill hooks
@@ -335,10 +344,12 @@ function load(g) {
   }
   nodes.forEach(n => { n.p = pos[n.id]; n.spawn = { x: n.p.x, y: n.p.y }; });
   const h = g.highlight || {};
+  hiUntil = Date.parse(h.since || g.built) + HIGHLIGHT_HOURS * 36e5;
   hiN = new Set(h.nodes || []); hiE = new Set();
   (h.edges || []).forEach(([a, b]) => { hiE.add(a + '|' + b); hiE.add(b + '|' + a); });
   edges.forEach(e => e.hi = hiE.has(e.a.id + '|' + e.b.id));
   document.getElementById('reason').textContent = h.reason || '';
+  expireHighlight();
   layout(first ? 450 : fresh ? 150 : 0);
   nodes.forEach(n => { n.from = first ? { x: n.p.x, y: n.p.y } : old[n.id] || n.spawn; n.d = { ...n.from }; });
   morph.t0 = performance.now();

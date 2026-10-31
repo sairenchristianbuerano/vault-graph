@@ -166,9 +166,11 @@ def build(root, quiet=False, highlight=None):
             new_n = [n for n in nodes if n not in old.get("nodes", {})]
             if new_e or new_n:
                 highlight = {"reason": f"New since last build: {len(new_e)} link(s), {len(new_n)} node(s)",
-                             "nodes": sorted({x for e in new_e for x in e[:2]} | set(new_n)), "edges": new_e}
-            else:
+                             "nodes": sorted({x for e in new_e for x in e[:2]} | set(new_n)), "edges": new_e,
+                             "since": dt.datetime.now().isoformat(timespec="seconds")}
+            else:  # keep the last change; the page stops glowing it HIGHLIGHT_HOURS after `since`
                 highlight = old.get("highlight") or {"reason": "No changes", "nodes": [], "edges": []}
+                highlight.setdefault("since", old.get("built"))
     with open(gj, "w", encoding="utf-8", newline="\n") as fh:
         json.dump({"built": dt.datetime.now().isoformat(timespec="seconds"), "highlight": highlight,
                    "nodes": nodes, "edges": edges}, fh, indent=1, sort_keys=True)
