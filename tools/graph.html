@@ -209,13 +209,15 @@ const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) 
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
 let W = 0, H = 0, dpr = window.devicePixelRatio || 1;
 let nodes = [], edges = [], byId = {}, pos = {}, hiN = new Set(), hiE = new Set();
-// "new since last build" glows for this long after it appeared, then the graph goes quiet
-const HIGHLIGHT_HOURS = 2;
-let hiUntil = 0;
+// "new since last build" glows at full strength when it appears and fades to nothing over this
+// long; the header shows how much glow is left
+const HIGHLIGHT_HOURS = 1;
+let hiUntil = 0, hiFade = 0, hiReason = '';
 function expireHighlight() {
-  if (!hiN.size || Date.now() < hiUntil) return;
-  hiN = new Set(); hiE = new Set(); edges.forEach(e => e.hi = false);
-  document.getElementById('reason').textContent = 'No new links in the last ' + HIGHLIGHT_HOURS + ' h';
+  const left = Math.max(0, Math.min(1, (hiUntil - Date.now()) / (HIGHLIGHT_HOURS * 36e5)));
+  if (hiN.size && left > 0) { document.getElementById('reason').textContent = `${hiReason} · glow ${Math.round(left * 100)}%`; return; }
+  if (hiN.size) { hiN = new Set(); hiE = new Set(); edges.forEach(e => e.hi = false); }
+  document.getElementById('reason').textContent = hiReason ? `No new links in the last ${HIGHLIGHT_HOURS} h` : '';
 }
 setInterval(expireHighlight, 60000);
 let restore = null;
@@ -348,7 +350,7 @@ function load(g) {
   hiN = new Set(h.nodes || []); hiE = new Set();
   (h.edges || []).forEach(([a, b]) => { hiE.add(a + '|' + b); hiE.add(b + '|' + a); });
   edges.forEach(e => e.hi = hiE.has(e.a.id + '|' + e.b.id));
-  document.getElementById('reason').textContent = h.reason || '';
+  hiReason = h.reason || '';
   expireHighlight();
   layout(first ? 450 : fresh ? 150 : 0);
   nodes.forEach(n => { n.from = first ? { x: n.p.x, y: n.p.y } : old[n.id] || n.spawn; n.d = { ...n.from }; });
@@ -453,17 +455,19 @@ function draw(t) {
     cx.fillRect(s.x, s.y, s.r, s.r);
   }
   cx.lineWidth = Math.max(.6, Math.min(1.2, view.k * .8));
-  for (const e of edges) if (!e.hi) {
+  for (const e of edges) {  // every link drawn plainly; new ones get a fading glow on top below
     const [x1, y1] = S(e.a.d), [x2, y2] = S(e.b.d);
     cx.strokeStyle = `rgba(${EDGE},${.16 + .1 * (still ? .5 : (Math.sin(t * .9 + e.ph) + 1) / 2)})`;
     cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
   }
-  for (const n of nodes) if (!hiN.has(n.id)) {
+  for (const n of nodes) {
     const [x, y] = S(n.d);
     if (x < -30 || y < -30 || x > W + 30 || y > H + 30) continue;
     star(n, x, y, still ? .6 : (Math.sin(t * n.sp + n.ph) + 1) / 2, n === hover);
   }
   const pulse = still ? .6 : (Math.sin(t * 2.4) + 1) / 2;
+  hiFade = hiN.size ? Math.max(0, Math.min(1, (hiUntil - Date.now()) / (HIGHLIGHT_HOURS * 36e5))) : 0;
+  cx.save(); cx.globalAlpha = hiFade;  // the "new" glow fades out over HIGHLIGHT_HOURS
   cx.save(); cx.lineCap = 'round';
   for (const e of edges) if (e.hi) {
     const [x1, y1] = S(e.a.d), [x2, y2] = S(e.b.d);
@@ -491,6 +495,7 @@ function draw(t) {
     cx.fillStyle = `rgb(${HI})`; cx.beginPath(); cx.arc(x, y, r, 0, 6.3); cx.fill(); cx.restore();
     cx.fillStyle = '#ebf5f0'; cx.beginPath(); cx.arc(x, y, r * .35, 0, 6.3); cx.fill();
   }
+  cx.restore();  // end of the fading glow
   cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.fillStyle = '#d9e6e0';
   for (const n of nodes) {
     const show = hiN.has(n.id) || n === hover || (view.k > 1.8 && n.kind === 'note');
