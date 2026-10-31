@@ -540,7 +540,7 @@ def read_activity():
     except (OSError, ValueError):
         return {}
     now = time.time()
-    return {k: v for k, v in act.items() if now - v.get("since", 0) < TTL.get(v.get("kind"), 900)}
+    return {k: v for k, v in act.items() if now - max(v.get("since", 0), v.get("seen", 0)) < TTL.get(v.get("kind"), 900)}
 
 
 def activity(event):
@@ -558,13 +558,18 @@ def activity(event):
         if event == "start" and tool:
             short = tool.split("__")[-1] if tool.startswith("mcp__") else tool
             log_event(who, short, tool_detail(tool, inp))
-        elif event == "idle":
-            log_event("main", "idle", "turn finished, waiting for the user")
-            return
         act = read_activity()
+        if event == "idle":  # the turn ended, but background agents it started may still be working
+            bg = [k for k, v in act.items() if v["kind"] == "agent"]
+            log_event("main", "idle", f"turn finished, {len(bg)} background agent(s) still working: {', '.join(bg)}" if bg
+                      else "turn finished, waiting for the user")
+            return
+        alive = who != "main" and event == "start"  # a subagent's own tool call proves it is running
+        if alive:
+            act.setdefault(who, {"kind": "agent", "since": time.time(), "desc": ""})["seen"] = time.time()
         if event == "start" and tool in ("Agent", "Task"):
             name = inp.get("subagent_type") or "general-purpose"
-            act[name] = {"kind": "agent", "since": time.time(), "desc": (inp.get("description") or "")[:80]}
+            act[name] = {"kind": "agent", "since": time.time(), "desc": (inp.get("description") or "")[:80], "parent": who}
             log_event(name, "started", inp.get("description") or "")
         elif event == "start" and tool == "Skill":
             name = (inp.get("skill") or "").split(":")[-1]
@@ -576,13 +581,11 @@ def activity(event):
             if tool in ("Agent", "Task") and (inp.get("run_in_background") or "async_launched" in resp
                                              or "async agent launched" in resp):
                 return  # background agent keeps running; SubagentStop ends it (newer Claude: every agent is async)
-            if not name:  # SubagentStop without a name: end the oldest running agent
-                agents = sorted((v["since"], k) for k, v in act.items() if v["kind"] == "agent")
-                name = agents[0][1] if agents else None
+            # no name = one of Claude's own helper agents; guessing ended the wrong one, so ignore it (TTL cleans up)
             if name and name in act:
                 act.pop(name, None)
                 log_event(name, "done", "finished")
-        else:
+        elif not alive:
             return
         with open(ACTIVITY, "w", encoding="utf-8") as fh:
             json.dump(act, fh)

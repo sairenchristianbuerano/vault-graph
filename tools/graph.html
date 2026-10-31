@@ -205,6 +205,7 @@ const HI = '79,192,141', EDGE = '120,160,145', BG = '#0b1512';
 // relying on colour; notes stay round
 const CAT = {
   agent:  { rgb: '180,140,255', name: 'agent', sides: 4 },
+  subagent: { rgb: '70,225,215', name: 'subagent', sides: 4 },  // an agent another agent started: same shape, own colour
   skill:  { rgb: '240,184,90',  name: 'skill', sides: 3 },
   memory: { rgb: '111,183,232', name: 'memory' },
   work:   { rgb: '150,185,170', name: 'work' },
@@ -271,12 +272,13 @@ function legend() {
   const counts = {}; nodes.forEach(n => counts[n.cat] = (counts[n.cat] || 0) + 1);
   const el = document.getElementById('legend'); el.innerHTML = '';
   for (const [k, c] of Object.entries(CAT)) {
-    if (!counts[k]) continue;
+    if (!counts[k] && k !== 'subagent') continue;  // subagents only exist while they run, so they have no count
     const d = document.createElement('div');
     const dot = document.createElement('i'); dot.style.background = `rgb(${c.rgb})`; dot.style.color = `rgb(${c.rgb})`;
     if (c.sides) { dot.style.borderRadius = '0'; dot.style.clipPath = `polygon(${poly(c.sides, (cs, sn) => `${50 + 50 * cs}% ${50 + 50 * sn}%`)})`; }
-    d.appendChild(dot); d.appendChild(document.createTextNode(`${c.name} (${counts[k]})`)); el.appendChild(d);
+    d.appendChild(dot); d.appendChild(document.createTextNode(counts[k] ? `${c.name} (${counts[k]})` : c.name)); el.appendChild(d);
     d.dataset.cat = k; d.onclick = () => showCat(catFocus === k ? null : k);
+    if (k === 'subagent') d.onclick = () => { const s = Object.keys(active).find(n => active[n].parent && active[n].parent !== 'main'); if (s) focusWho(s, lastLog); };
   }
   { const d = document.createElement('div'), dot = document.createElement('i');
     dot.style.background = dot.style.color = `rgb(${CAT.main.rgb})`; dot.style.width = dot.style.height = '12px';
@@ -481,14 +483,14 @@ function fitHighlight(instant) {
 }
 
 const S = p => [p.x * view.k + W / 2 + view.x, p.y * view.k + H / 2 + view.y];
-const radius = n => n === MAIN ? 9 * Math.min(1.6, Math.max(.8, view.k)) : ((n.cat === 'entity' ? 1.8 : n.cat === 'agent' ? 3.6 : 2.6) + Math.min(n.deg, 14) * .25) * Math.min(1.6, Math.max(.7, view.k));
+const radius = n => n === MAIN ? 9 * Math.min(1.6, Math.max(.8, view.k)) : ((n.cat === 'entity' ? 1.8 : n.cat === 'agent' || n.cat === 'subagent' ? 3.6 : 2.6) + Math.min(n.deg, 14) * .25) * Math.min(1.6, Math.max(.7, view.k));
 const neighbours = n => n === MAIN ? new Map(mainTouched.map(m => [m, { a: MAIN, b: m, k: 'working on' }])) : neighbours0(n);
 const neighbours0 = n => { const s = new Map(); edges.forEach(e => { if (e.a === n) s.set(e.b, e); if (e.b === n) s.set(e.a, e); }); return s; };
 
 // corner points of a regular polygon, first corner straight up
 const poly = (sides, f) => [...Array(sides)].map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / sides; return f(Math.cos(a), Math.sin(a)); });
 function star(n, x, y, tw, boost) {
-  const c = CAT[n.cat], rgb = c.rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.cat === 'agent' ? 5.5 : 4;
+  const c = CAT[n.cat], rgb = c.rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.cat === 'agent' || n.cat === 'subagent' ? 5.5 : 4;
   const g = cx.createRadialGradient(x, y, 0, x, y, r * halo);
   g.addColorStop(0, `rgba(${rgb},${(.25 + .25 * tw) * (boost ? 1.6 : 1)})`); g.addColorStop(1, `rgba(${rgb},0)`);
   cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, r * halo, 0, 6.3); cx.fill();
@@ -588,7 +590,7 @@ function drawFrame(t) {
   if (x1 - x0 < 80 || y1 - y0 < 80) return;
   const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : planPct >= 90 ? '255,90,90' : planPct >= 70 ? '230,200,80' : '79,192,141';
   const m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
-  const busy = !still && m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP;
+  const busy = !still && ((m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP) || Object.values(active).some(a => a.kind === 'agent'));
   // each edge is a light bar: white-hot core fading out at both ends, light spilling inward onto the graph.
   // working: the spill swells into smooth rolling "mountains" and the whole frame breathes
   const breathe = busy ? .5 + .5 * Math.sin(t * 1.8) : .5, H0 = busy ? 16 + 10 * breathe : 12;
@@ -704,23 +706,42 @@ function drawMain(t) {
   }
   cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, radius(MAIN) * .35, 0, 6.3); cx.fill();
   cx.font = 'bold 15px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
-  cx.fillText('Claude (main)' + (m ? (m.what === 'idle' ? ' · idle' : busy ? ' · working' : ' · quiet') : ''), x, y - radius(MAIN) - 14);
+  const bg = Object.values(active).filter(a => a.kind === 'agent').length;  // its turn ended, its background agents did not
+  cx.fillText('Claude (main)' + (m ? (m.what === 'idle' ? (bg ? ` · waiting on ${bg} agent${bg > 1 ? 's' : ''}` : ' · idle') : busy ? ' · working' : ' · quiet') : ''), x, y - radius(MAIN) - 14);
 }
 
 // a running agent (or a skill in use) works like the main star: dashed lines to what it touches,
 // a fast pulse and rings rolling outward
+// where a running agent sits: its own star, or (built-in agents like Explore have none) a stand-in star
+// orbiting whoever started it, so nested agents hang off their parent
+function agentAt(name, depth = 0) {
+  const n = nodes.find(n => (n.cat === 'agent' || n.cat === 'skill') && label(n.id) === name);
+  if (n) return { n, xy: S(n.d) };
+  const par = active[name]?.parent, [px, py] = par && par !== 'main' && active[par] && depth < 4 ? agentAt(par, depth + 1).xy : S(MAIN.d);
+  let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) | 0;
+  const ang = (Math.abs(h) % 360) * Math.PI / 180;
+  return { n: { id: name, cat: 'agent', deg: 4 }, xy: [px + 95 * Math.cos(ang), py + 95 * Math.sin(ang)] };
+}
 function drawActive(t) {
-  for (const n of nodes) {
-    if ((n.cat !== 'agent' && n.cat !== 'skill') || !active[label(n.id)]) continue;
-    const [x, y] = S(n.d), rgb = CAT[n.cat].rgb, r = radius(n), a = active[label(n.id)];
+  for (const [name, a] of Object.entries(active)) {
+    if (a.kind === 'skill' && !nodes.some(n => n.cat === 'skill' && label(n.id) === name)) continue;  // plugin skills: no star
+    const sub = a.kind === 'agent' && a.parent && a.parent !== 'main', at = agentAt(name), [x, y] = at.xy;
+    const n = sub ? { ...at.n, cat: 'subagent' } : at.n, rgb = CAT[n.cat].rgb, r = radius(n);
     const pulse = still ? .6 : (Math.sin(t * 4) + 1) / 2;
-    drawWork(n, x, y, r, rgb, workingOn[label(n.id)] || [], true, pulse, t);
+    if (a.kind === 'agent') {  // dashed line from whoever started it, dashes flowing toward the agent
+      const [px, py] = a.parent && a.parent !== 'main' && active[a.parent] ? agentAt(a.parent).xy : S(MAIN.d);
+      cx.save(); cx.setLineDash([5, 7]); cx.lineDashOffset = still ? 0 : -t * 24;
+      cx.strokeStyle = `rgba(${rgb},.6)`; cx.lineWidth = 1.5; cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 6;
+      cx.beginPath(); cx.moveTo(px, py); cx.lineTo(x, y); cx.stroke(); cx.restore();
+    }
+    drawWork(n, x, y, r, rgb, workingOn[name] || [], true, pulse, t);
     cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
     star(n, x, y, .7 + .3 * pulse, true); cx.restore();
     cx.fillStyle = '#fff'; shapePath(n.cat, x, y, r * .35); cx.fill();
     cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
-    cx.fillText(label(n.id) + (a.kind === 'agent' ? ' · working' : ' · in use'), x, y - r - 30);
-    if (a.desc && a.kind === 'agent') { cx.font = '13px ui-monospace, Consolas, monospace'; cx.fillStyle = '#c9d8d1'; cx.fillText(a.desc, x, y - r - 14); }
+    cx.fillText(name + (a.kind === 'agent' ? ' · working' : ' · in use'), x, y - r - 30);
+    const sub2 = sub ? `spawned by ${a.parent}` + (a.desc ? ' · ' : '') : '';  // who started it
+    if (sub2 || (a.desc && a.kind === 'agent')) { cx.font = '13px ui-monospace, Consolas, monospace'; cx.fillStyle = '#c9d8d1'; cx.fillText(sub2 + (a.desc || ''), x, y - r - 14); }
   }
 }
 
@@ -913,6 +934,7 @@ let lastLog = [];
 // same colour everywhere for one actor: main = rose star, agents = purple, skills = amber
 const actorColor = who => {
   if (who === 'main') return `rgb(${CAT.main.rgb})`;
+  if (active[who]?.parent && active[who].parent !== 'main') return `rgb(${CAT.subagent.rgb})`;
   const n = nodes.find(n => (n.cat === 'agent' || n.cat === 'skill') && label(n.id) === who);
   return `rgb(${CAT[n ? n.cat : 'agent'].rgb})`;
 };
@@ -952,11 +974,14 @@ function renderLog(log, now) {
   for (const [name, a] of Object.entries(active)) {
     if (a.kind !== 'agent') continue;
     const seen = Math.max(a.since, (last[name] || {}).ts || 0), quiet = Math.round(now - seen);
-    chip(quiet < BUSY_CAP ? `${name} working` : `${name} quiet ${quiet}s`, quiet < BUSY_CAP ? 'working' : 'quiet', name);
+    const by = a.parent && a.parent !== 'main' ? ` (by ${a.parent})` : '';
+    chip(quiet < BUSY_CAP ? `${name}${by} working` : `${name}${by} quiet ${quiet}s`, quiet < BUSY_CAP ? 'working' : 'quiet', name);
   }
   for (const e of log.slice(-30)) if (e.what === 'done' && !active[e.who] && now - e.ts < 300) chip(`${e.who} done ✓`, 'done', e.who);
   const m = last.main;
-  if (m) chip(m.what === 'idle' ? `main idle ${Math.round(now - m.ts)}s` : now - m.ts < BUSY_CAP ? 'main working' : `main quiet ${Math.round(now - m.ts)}s`,
+  const bg = Object.entries(active).filter(([, a]) => a.kind === 'agent').map(([k]) => k);
+  if (m && m.what === 'idle' && bg.length) chip(`main waiting on ${bg.join(', ')}`, 'quiet', 'main');
+  else if (m) chip(m.what === 'idle' ? `main idle ${Math.round(now - m.ts)}s` : now - m.ts < BUSY_CAP ? 'main working' : `main quiet ${Math.round(now - m.ts)}s`,
               m.what === 'idle' ? 'idle' : now - m.ts < BUSY_CAP ? 'working' : 'quiet', 'main');
   const newest = log.length ? log[log.length - 1].ts : 0;
   document.getElementById('ago').textContent = newest ? `last event ${Math.round(now - newest)}s ago` : 'no events yet';
