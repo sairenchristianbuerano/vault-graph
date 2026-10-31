@@ -171,6 +171,10 @@
   #legend > div { border-radius:4px; padding:0 4px; }
   #legend > div:hover { background:#13221d; }
   #legend > div.on { background:#1b2e27; outline:1px solid currentColor; }
+  /* launcher app pages (?view=graph | ?view=tasks): one job per page */
+  body.v-graph #board, body.v-graph #legend { display:none !important; }
+  body.v-tasks #c, body.v-tasks #legend, body.v-tasks #log, body.v-tasks #ctl, body.v-tasks #info { display:none !important; }
+  body.v-tasks #board { display:block !important; left:var(--gap); right:var(--gap); top:calc(var(--top,44px) + var(--gap)); bottom:var(--gap); width:auto; max-height:none; }
 </style>
 </head>
 <body>
@@ -197,6 +201,11 @@
   <button id="zmain" title="Follow Claude (main): zoom to it and what it is working on, and keep the camera on it as it moves (m). Click again, drag the map, or pick another star to stop." style="color:rgb(255,110,170)">●</button>
 </div>
 <script>
+const VIEW = new URLSearchParams(location.search).get('view');  // the launcher app's pages: 'graph' or 'tasks'
+if (VIEW) document.body.classList.add('v-' + VIEW);
+const PHONE = !!window.AndroidBridge;  // inside the launcher app, which adds this bridge
+const okLaunch = () => !PHONE || confirm('Start Claude on the laptop?');  // a phone in a pocket should not launch sessions by accident
+window.showNode = id => { if (byId[id]) select(byId[id]); };  // the app calls this for "Show in graph" from the tasks page
 const cv = document.getElementById('c'), cx = cv.getContext('2d');
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const HI = '79,192,141', EDGE = '120,160,145', BG = '#0b1512';
@@ -776,7 +785,7 @@ function drawSelection(t) {
 
 let raf = null;
 function loop(ms) { tick(ms); draw(ms / 1000); raf = still ? null : requestAnimationFrame(loop); }
-function frame() { if (still || raf === null) { tick(performance.now()); draw(performance.now() / 1000); } }
+function frame() { if (VIEW === 'tasks') return; if (still || raf === null) { tick(performance.now()); draw(performance.now() / 1000); } }
 
 const runDraft = {};
 function el(tag, text, cls) { const d = document.createElement(tag); if (text != null) d.textContent = text; if (cls) d.className = cls; return d; }
@@ -827,6 +836,7 @@ function select(n, center = true, instant = false) {
     ask.rows = 2; ask.maxLength = 2000; ask.placeholder = 'What should it do? (optional)';
     ask.value = runDraft[n.id] || ''; ask.oninput = () => runDraft[n.id] = ask.value;  // survives a panel rebuild
     go.onclick = async () => {
+      if (!okLaunch()) return;
       msg.textContent = 'Opening Claude…';
       try {
         const r = await fetch('run', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vault-Token': TOKEN },
@@ -1011,7 +1021,7 @@ function renderLog(log, now) {
 // task board (the board file from vault-graph.json, default _global/now.md)
 const SEC = { Ongoing: ['●', '180,140,255'], Next: ['→', '79,192,141'], Open: ['○', '111,183,232'], Pending: ['⏳', '224,160,80'], Done: ['✓', '125,145,138'] };
 let boardSig = '', seenTasks = null, openSec = { Ongoing: true, Next: true, Open: false, Pending: true, Done: false };
-if (innerWidth <= 900) document.getElementById('board').classList.add('min');
+if (innerWidth <= 900 && VIEW !== 'tasks') document.getElementById('board').classList.add('min');  // phones start collapsed, except the tasks page
 document.getElementById('boardh').onclick = () => document.getElementById('board').classList.toggle('min');
 const clean = t => t.replace(/\[\[([^\]|]+)(\|[^\]]*)?\]\]/g, '$1').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*`]/g, '');
 function renderBoard(b) {
@@ -1202,17 +1212,20 @@ function openTask(sec, it) {
 const closeTask = () => { tmEl('tm').classList.remove('on'); tmTask = null; };
 tmEl('tmx').onclick = closeTask;
 tmEl('tm').onclick = e => { if (e.target.id === 'tm') closeTask(); };
-tmEl('tmnode').onclick = () => { const n = nodeFromText(tmTask.it); closeTask(); select(n); };
+tmEl('tmnode').onclick = () => { const n = nodeFromText(tmTask.it); closeTask(); if (VIEW === 'tasks' && PHONE) AndroidBridge.showInGraph(n.id); else select(n); };
 tmEl('tmcopy').onclick = async () => {
+  if (PHONE) { AndroidBridge.copy(copyPrompt(tmTask.sec, tmTask.it, noteVal())); tmEl('tmmsg').textContent = 'Prompt copied.'; return; }  // no clipboard API over plain http
   try { await navigator.clipboard.writeText(copyPrompt(tmTask.sec, tmTask.it, noteVal())); tmEl('tmmsg').textContent = 'Prompt copied. Paste it into Claude.'; }
   catch { tmEl('tmmsg').textContent = 'Copy blocked by the browser.'; }
 };
 tmEl('tmgo').onclick = async () => {
+  if (!okLaunch()) return;
   tmEl('tmmsg').textContent = 'Opening Claude…';
   try { const j = await tmPost('claude'); if (j) { tmEl('tmmsg').textContent = `Opening Claude: ${j.note}.`; setTimeout(closeTask, 2600); } }
   catch { tmEl('tmmsg').textContent = 'Graph server is not running. Run: python tools/vault.py ui'; }
 };
 tmEl('tmcheck').onclick = async () => {
+  if (!okLaunch()) return;
   tmEl('tmmsg').textContent = 'Starting a check…';
   try { const j = await tmPost('check'); if (j) { tmEl('tmmsg').textContent = `Checking in Claude: ${j.note}. The board updates when it finishes.`; setTimeout(closeTask, 2600); } }
   catch { tmEl('tmmsg').textContent = 'Graph server is not running. Run: python tools/vault.py ui'; }
@@ -1274,7 +1287,7 @@ async function poll() {
   }
 }
 resize();
-if (!still) raf = requestAnimationFrame(loop);
+if (!still && VIEW !== 'tasks') raf = requestAnimationFrame(loop);  // the tasks page has no canvas to draw
 poll();
 setInterval(poll, 2000);
 </script>
