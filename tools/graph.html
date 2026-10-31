@@ -211,7 +211,8 @@ const CAT = {
 const MAIN = { id: 'main', kind: 'main', cat: 'main', repo: '-', desc: 'This Claude session. It drifts toward the notes it is working on; the lines show what it touched last.',
                p: { x: 0, y: 0 }, d: { x: 0, y: 0 }, deg: 0, ph: 0, sp: 1 };
 let mainTouched = [], workingOn = {};
-let touchTs = {}, linkAnim = {};  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
+let touchTs = {}, linkAnim = {};
+let retract = null;  // {list, t0}: the main star's lines pulling back in after it went idle  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
 const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
 let W = 0, H = 0, dpr = window.devicePixelRatio || 1;
@@ -598,7 +599,7 @@ function drawFrame(t) {
 // touching, their names, and rings rolling outward while it works. A star outside the visible area gets
 // a marker pinned to the frame edge instead of a line running off-screen; click the marker to fly there
 let markers = [];
-function drawWork(who, x, y, r, rgb, list, busy, pulse, t) {
+function drawWork(who, x, y, r, rgb, list, busy, pulse, t, shrink = 1) {
   const m = 14, inside = (px, py) => px > vr.x0 + m && px < vr.x1 - m && py > vr.y0 + m && py < vr.y1 - m;
   const text = (s, px, py) => { cx.lineWidth = 3; cx.strokeStyle = 'rgba(5,10,8,.85)'; cx.strokeText(s, px, py); cx.fillStyle = `rgb(${rgb})`; cx.fillText(s, px, py); };
   // where the way from (fx,fy) out to (tx,ty) crosses the frame edge
@@ -627,7 +628,7 @@ function drawWork(who, x, y, r, rgb, list, busy, pulse, t) {
     if (off && away) continue;  // both ends off-screen: nothing to show
     if (off) [nx, ny] = edge(x, y, nx, ny);
     // each new tool call on a note draws the line out to it with a bright head, then a ring where it lands
-    const age = (performance.now() - (linkAnim[wk + '|' + n.id] ?? -1e9)) / 1000, grow = still ? 1 : ease(Math.max(0, Math.min(1, age / .6)));
+    const age = (performance.now() - (linkAnim[wk + '|' + n.id] ?? -1e9)) / 1000, grow = (still ? 1 : ease(Math.max(0, Math.min(1, age / .6)))) * shrink;
     const gx = ax + (nx - ax) * grow, gy = ay + (ny - ay) * grow;
     const g = cx.createLinearGradient(ax, ay, nx, ny);
     g.addColorStop(0, `rgba(${rgb},${.5 + .3 * pulse})`); g.addColorStop(1, `rgba(${rgb},${off ? .55 : .12})`);
@@ -646,7 +647,7 @@ function drawWork(who, x, y, r, rgb, list, busy, pulse, t) {
     if (off) { const [sx, sy] = S(n.d); pin(nx, ny, Math.atan2(sy - y, sx - x), label(n.id), n); }
     else { cx.textAlign = 'center'; text(label(n.id), nx, ny + radius(n) + 16); }
   }
-  if (away) pin(ax, ay, Math.atan2(y - ay, x - ax), who === MAIN ? 'Claude (main)' : label(who.id), who);
+  if (away && shrink === 1) pin(ax, ay, Math.atan2(y - ay, x - ax), who === MAIN ? 'Claude (main)' : label(who.id), who);
   cx.restore();
   if (busy && !still) for (let i = 0; i < 2; i++) {
     const f = (t * .7 + i / 2) % 1;
@@ -661,6 +662,10 @@ function drawMain(t) {
   const busy = m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP;
   const pulse = still ? .6 : (Math.sin(t * (busy ? 4 : 1.5)) + 1) / 2;
   drawWork(MAIN, x, y, radius(MAIN), rgb, mainTouched, busy, pulse, t);
+  if (retract) {  // idle: the old lines slowly pull back into the star, head first, then vanish (5 s: an exit, no rush)
+    const u = (performance.now() - retract.t0) / 5000;
+    if (u >= 1) retract = null; else drawWork(MAIN, x, y, radius(MAIN), rgb, retract.list, false, pulse, t, 1 - ease(u));
+  }
   cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
   star(MAIN, x, y, .7 + .3 * pulse, false); cx.restore();
   cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, radius(MAIN) * .35, 0, 6.3); cx.fill();
@@ -871,13 +876,18 @@ function renderLog(log, now) {
   const last = {}; log.forEach(e => last[e.who] = e);
   lastLog = log;
   workingOn = {};  // per actor (main and each agent): the last 6 stars its tool calls named
+  const stopped = {};  // newest first: an actor's idle ends its turn, so older calls are not "working on" any more
   for (const e of [...log].reverse()) {
+    if (e.what === 'idle') { stopped[e.who] = true; continue; }
+    if (stopped[e.who]) continue;
     const n = nodeFromText(e.detail), list = workingOn[e.who] ||= [];
     if (n && list.length < 6 && !list.includes(n)) list.push(n);
     const k = n && e.who + '|' + n.id;  // a new tool call on this note replays the connect animation
     if (k && !(touchTs[k] >= e.ts)) { touchTs[k] = e.ts; linkAnim[k] = performance.now(); }
   }
+  const prev = mainTouched;
   mainTouched = workingOn.main || [];
+  if (prev.length && !mainTouched.length && !still) retract = { list: prev, t0: performance.now() };  // went idle: disconnect
   const chip = (text, cls, who) => {
     const c = document.createElement('span'); c.className = 'chip ' + cls; c.textContent = text;
     c.style.color = c.style.borderColor = actorColor(who);
