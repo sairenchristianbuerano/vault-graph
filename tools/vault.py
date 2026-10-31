@@ -570,8 +570,10 @@ def activity(event):
                 act[name] = {"kind": "skill", "since": time.time(), "desc": "skill in use"}
         elif event == "stop":
             name = inp.get("subagent_type") or data.get("agent_type") or data.get("subagent_type")
-            if tool in ("Agent", "Task") and inp.get("run_in_background"):
-                return  # background agent keeps running; SubagentStop ends it
+            resp = json.dumps(data.get("tool_response", ""), default=str).lower()
+            if tool in ("Agent", "Task") and (inp.get("run_in_background") or "async_launched" in resp
+                                             or "async agent launched" in resp):
+                return  # background agent keeps running; SubagentStop ends it (newer Claude: every agent is async)
             if not name:  # SubagentStop without a name: end the oldest running agent
                 agents = sorted((v["since"], k) for k, v in act.items() if v["kind"] == "agent")
                 name = agents[0][1] if agents else None

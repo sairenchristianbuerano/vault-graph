@@ -200,7 +200,7 @@ const CAT = {
 // the main session is its own star: biggest, unique colour, drifts toward what it is working on
 const MAIN = { id: 'main', kind: 'main', cat: 'main', repo: '-', desc: 'This Claude session. It drifts toward the notes it is working on; the lines show what it touched last.',
                p: { x: 0, y: 0 }, d: { x: 0, y: 0 }, deg: 0, ph: 0, sp: 1 };
-let mainTouched = [];
+let mainTouched = [], workingOn = {};
 const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
 let W = 0, H = 0, dpr = window.devicePixelRatio || 1;
@@ -536,13 +536,11 @@ function drawFrame(t) {
   cx.restore();
 }
 
-function drawMain(t) {
-  if (!nodes.length) return;
-  const [x, y] = S(MAIN.d), rgb = CAT.main.rgb, m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
-  const busy = m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP;
-  const pulse = still ? .6 : (Math.sin(t * (busy ? 4 : 1.5)) + 1) / 2;
+// what a working actor draws (main and running agents alike): dashed lines to the stars it is
+// touching, their names, and rings rolling outward while it works
+function drawWork(x, y, r, rgb, list, busy, pulse, t) {
   cx.save(); cx.lineCap = 'round';
-  for (const n of mainTouched) {  // lines to what it is working on
+  for (const n of list) {
     const [nx, ny] = S(n.d);
     cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 6 + 8 * pulse;
     cx.strokeStyle = `rgba(${rgb},${.25 + .35 * pulse})`; cx.lineWidth = 1.4;
@@ -551,16 +549,24 @@ function drawMain(t) {
   }
   cx.restore();
   cx.font = '13px ui-monospace, Consolas, monospace'; cx.textAlign = 'center';
-  for (const n of mainTouched) {  // name each end of a dashed line, so you can see what main is working on
-    const [nx, ny] = S(n.d), r = radius(n);
-    cx.lineWidth = 3; cx.strokeStyle = 'rgba(5,10,8,.85)'; cx.strokeText(label(n.id), nx, ny + r + 16);
-    cx.fillStyle = `rgb(${rgb})`; cx.fillText(label(n.id), nx, ny + r + 16);
+  for (const n of list) {  // name each end of a dashed line, so you can see what it is working on
+    const [nx, ny] = S(n.d), rn = radius(n);
+    cx.lineWidth = 3; cx.strokeStyle = 'rgba(5,10,8,.85)'; cx.strokeText(label(n.id), nx, ny + rn + 16);
+    cx.fillStyle = `rgb(${rgb})`; cx.fillText(label(n.id), nx, ny + rn + 16);
   }
   if (busy && !still) for (let i = 0; i < 2; i++) {
     const f = (t * .7 + i / 2) % 1;
     cx.strokeStyle = `rgba(${rgb},${(1 - f) * .7})`; cx.lineWidth = 2;
-    cx.beginPath(); cx.arc(x, y, radius(MAIN) + 6 + f * 46, 0, 6.3); cx.stroke();
+    cx.beginPath(); cx.arc(x, y, r + 6 + f * 46, 0, 6.3); cx.stroke();
   }
+}
+
+function drawMain(t) {
+  if (!nodes.length) return;
+  const [x, y] = S(MAIN.d), rgb = CAT.main.rgb, m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
+  const busy = m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP;
+  const pulse = still ? .6 : (Math.sin(t * (busy ? 4 : 1.5)) + 1) / 2;
+  drawWork(x, y, radius(MAIN), rgb, mainTouched, busy, pulse, t);
   cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
   star(MAIN, x, y, .7 + .3 * pulse, false); cx.restore();
   cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, radius(MAIN) * .35, 0, 6.3); cx.fill();
@@ -568,25 +574,20 @@ function drawMain(t) {
   cx.fillText('Claude (main)' + (m ? (m.what === 'idle' ? ' · idle' : busy ? ' · working' : ' · quiet') : ''), x, y - radius(MAIN) - 14);
 }
 
-// a running agent (or a skill just used) sends out pulsing ripples like a beacon
+// a running agent (or a skill in use) works like the main star: dashed lines to what it touches,
+// a fast pulse and rings rolling outward
 function drawActive(t) {
   for (const n of nodes) {
     if ((n.cat !== 'agent' && n.cat !== 'skill') || !active[label(n.id)]) continue;
-    const [x, y] = S(n.d), rgb = CAT[n.cat].rgb, base = radius(n) * 1.6 + 4;
-    for (let i = 0; i < 3; i++) {
-      const f = still ? i / 3 : ((t * .8 + i / 3) % 1);
-      cx.strokeStyle = `rgba(${rgb},${(1 - f) * .85})`; cx.lineWidth = 2;
-      cx.beginPath(); cx.arc(x, y, base + f * 38, 0, 6.3); cx.stroke();
-    }
-    const beat = still ? 1 : 1 + .45 * Math.max(0, Math.sin(t * 6));
-    cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 24 * beat;
-    star(n, x, y, 1, true);
-    cx.fillStyle = `rgb(${rgb})`; cx.beginPath(); cx.arc(x, y, radius(n) * beat, 0, 6.3); cx.fill();
-    cx.restore();
+    const [x, y] = S(n.d), rgb = CAT[n.cat].rgb, r = radius(n), a = active[label(n.id)];
+    const pulse = still ? .6 : (Math.sin(t * 4) + 1) / 2;
+    drawWork(x, y, r, rgb, workingOn[label(n.id)] || [], true, pulse, t);
+    cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
+    star(n, x, y, .7 + .3 * pulse, true); cx.restore();
+    cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, r * .35, 0, 6.3); cx.fill();
     cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
-    const a = active[label(n.id)];
-    cx.fillText(label(n.id) + (a.kind === 'agent' ? ' · running' : ' · in use'), x, y - base - 44);
-    if (a.desc && a.kind === 'agent') { cx.font = '13px ui-monospace, Consolas, monospace'; cx.fillStyle = '#c9d8d1'; cx.fillText(a.desc, x, y - base - 30); }
+    cx.fillText(label(n.id) + (a.kind === 'agent' ? ' · working' : ' · in use'), x, y - r - 30);
+    if (a.desc && a.kind === 'agent') { cx.font = '13px ui-monospace, Consolas, monospace'; cx.fillStyle = '#c9d8d1'; cx.fillText(a.desc, x, y - r - 14); }
   }
 }
 
@@ -760,13 +761,12 @@ function renderLog(log, now) {
   chips.innerHTML = '';
   const last = {}; log.forEach(e => last[e.who] = e);
   lastLog = log;
-  { const seen = new Set(), out = [];
-    for (const e of [...log].reverse()) {
-      if (e.who !== 'main') continue;
-      const n = nodeFromText(e.detail);
-      if (n && !seen.has(n)) { seen.add(n); out.push(n); if (out.length >= 6) break; }
-    }
-    mainTouched = out; }
+  workingOn = {};  // per actor (main and each agent): the last 6 stars its tool calls named
+  for (const e of [...log].reverse()) {
+    const n = nodeFromText(e.detail), list = workingOn[e.who] ||= [];
+    if (n && list.length < 6 && !list.includes(n)) list.push(n);
+  }
+  mainTouched = workingOn.main || [];
   const chip = (text, cls, who) => {
     const c = document.createElement('span'); c.className = 'chip ' + cls; c.textContent = text;
     c.style.color = c.style.borderColor = actorColor(who);
