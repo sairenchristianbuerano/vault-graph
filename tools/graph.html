@@ -1252,7 +1252,9 @@ function openTaskFromHash() {
   if (li) li.click();
 }
 let flashTimer, htmlVer = null;
+let graphVer;  // phone: last graph.json version fetched
 async function poll() {
+  if (PHONE && document.hidden) return;  // the app's other page is hidden: no polling, no battery spent
   try {
     const st = await (await fetch('status?' + Date.now(), { cache: 'no-store' })).json();
     if (htmlVer !== null && st.html !== htmlVer) {  // page code changed: reload quietly, same view
@@ -1268,6 +1270,8 @@ async function poll() {
     renderBoard(st.board);
     const names = Object.entries(active).filter(([, v]) => v.kind === 'agent').map(([k]) => k);
     document.getElementById('running').textContent = names.length ? 'running: ' + names.join(', ') : '';
+    if (PHONE && st.graph !== undefined && st.graph === graphVer) return;  // phone: fetch the ~90 KB graph only when it changed
+    graphVer = st.graph;
     const g = await (await fetch('graph.json?' + Date.now(), { cache: 'no-store' })).json();
     document.getElementById('stale').style.display = 'none';
     document.getElementById('stamp').textContent = 'graph built ' + fmt(new Date(g.built)) + ' · refreshed ' + fmt(new Date());
@@ -1289,7 +1293,7 @@ async function poll() {
 resize();
 if (!still && VIEW !== 'tasks') raf = requestAnimationFrame(loop);  // the tasks page has no canvas to draw
 poll();
-setInterval(poll, 2000);
+setInterval(poll, PHONE ? 3000 : 2000);
 </script>
 </body>
 </html>
