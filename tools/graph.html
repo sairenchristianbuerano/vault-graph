@@ -213,7 +213,11 @@ const MAIN = { id: 'main', kind: 'main', cat: 'main', repo: '-', desc: 'This Cla
                p: { x: 0, y: 0 }, d: { x: 0, y: 0 }, deg: 0, ph: 0, sp: 1 };
 let mainTouched = [], workingOn = {};
 let touchTs = {}, linkAnim = {};
-let retract = null;  // {list, t0}: the main star's lines pulling back in after it went idle  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
+let retract = null, lastIdleTs;  // lastIdleTs: newest main idle seen; undefined until the first poll, so a page load does not pan
+function panToMain() {  // centre the main star at the current zoom; leaves the camera alone while a star's details are open
+  if (pinned || !nodes.length) return;
+  glideTo(MAIN.p.x, MAIN.p.y, view.k);
+}  // {list, t0}: the main star's lines pulling back in after it went idle  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
 const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
 let W = 0, H = 0, dpr = window.devicePixelRatio || 1;
@@ -414,8 +418,24 @@ function animateTo(goal, instant) {
   if (still || instant) { Object.assign(view, goal); cam = null; return frame(); }
   cam = { from: { ...view }, to: goal, t0: performance.now(), dur: 1000 }; followAt = null;
 }
+// a slow camera glide to a world point: soft start and landing, and a slight zoom-out mid-way when it is far,
+// like flying over and settling; a focus ring pulses on the main star as it lands
+let focusAt = -1e9;
+function glideTo(px, py, k1, dur = 2200) {
+  const ins = insets(), ox = (ins.l - ins.r) / 2, oy = (ins.t - ins.b) / 2;
+  if (still) { Object.assign(view, { k: k1, x: ox - px * k1, y: oy - py * k1 }); return frame(); }
+  const c0 = { x: (ox - view.x) / view.k, y: (oy - view.y) / view.k };
+  const far = Math.hypot(px - c0.x, py - c0.y) * view.k;
+  cam = { glide: true, c0, c1: { x: px, y: py }, k0: view.k, k1, ox, oy, arc: Math.min(.3, far / 4000), t0: performance.now(), dur };
+  followAt = null; focusAt = cam.t0 + dur * .8;
+}
 function tick(now) {
-  if (cam) {
+  if (cam && cam.glide) {
+    const u = Math.min(1, (now - cam.t0) / cam.dur), e = u * u * u * (u * (u * 6 - 15) + 10);  // smootherstep
+    const k = cam.k0 * Math.pow(cam.k1 / cam.k0, e) * (1 - cam.arc * Math.sin(Math.PI * u));
+    view.k = k; view.x = cam.ox - (cam.c0.x + (cam.c1.x - cam.c0.x) * e) * k; view.y = cam.oy - (cam.c0.y + (cam.c1.y - cam.c0.y) * e) * k;
+    if (u >= 1) cam = null;
+  } else if (cam) {
     const u = Math.min(1, (now - cam.t0) / cam.dur), e = ease(u);
     view.k = cam.from.k * Math.pow(cam.to.k / cam.from.k, e);
     view.x = cam.from.x + (cam.to.x - cam.from.x) * e;
@@ -673,6 +693,11 @@ function drawMain(t) {
   }
   cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
   star(MAIN, x, y, .7 + .3 * pulse, false); cx.restore();
+  const fp = (performance.now() - focusAt) / 1400;  // the camera just landed on it: one soft focus ring
+  if (fp >= 0 && fp < 1) {
+    cx.strokeStyle = `rgba(${rgb},${(1 - fp) * .8})`; cx.lineWidth = 2;
+    cx.beginPath(); cx.arc(x, y, radius(MAIN) + 8 + ease(fp) * 70, 0, 6.3); cx.stroke();
+  }
   cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, radius(MAIN) * .35, 0, 6.3); cx.fill();
   cx.font = 'bold 15px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
   cx.fillText('Claude (main)' + (m ? (m.what === 'idle' ? ' · idle' : busy ? ' · working' : ' · quiet') : ''), x, y - radius(MAIN) - 14);
@@ -893,6 +918,9 @@ function renderLog(log, now) {
   const prev = mainTouched;
   mainTouched = workingOn.main || [];
   if (prev.length && !mainTouched.length && !still) retract = { list: prev, t0: performance.now() };  // went idle: disconnect
+  const lastMain = log.filter(e => e.who === 'main').pop();  // a turn just ended: glide the camera to the main star
+  if (lastMain?.what === 'idle' && lastMain.ts !== lastIdleTs) { if (lastIdleTs !== undefined) panToMain(); lastIdleTs = lastMain.ts; }
+  else if (lastIdleTs === undefined) lastIdleTs = 0;
   const chip = (text, cls, who) => {
     const c = document.createElement('span'); c.className = 'chip ' + cls; c.textContent = text;
     c.style.color = c.style.borderColor = actorColor(who);
