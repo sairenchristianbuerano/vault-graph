@@ -214,6 +214,9 @@ const label = id => { const p = id.split('/'); const f = p.pop().replace(/\.md$/
 const fmt = d => d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const hash = s => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0) / 4294967296; };
 const topH = () => document.getElementById('bar').offsetHeight;
+// Claude counts as working from its first tool call until the Stop hook logs idle, so a long
+// tool call or a long think still shows; the cap retires sessions that never logged Stop (crash, reboot)
+const BUSY_CAP = 900;
 // free space for the graph: inside the left column, right panel, top bar and activity log
 function insets() {
   const box = id => document.getElementById(id), r = box('info'), lg = box('log');
@@ -497,7 +500,7 @@ function drawFrame(t) {
   if (x1 - x0 < 80 || y1 - y0 < 80) return;
   const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : planPct >= 90 ? '255,90,90' : planPct >= 70 ? '230,200,80' : '79,192,141';
   const m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
-  const busy = !still && m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < 20;
+  const busy = !still && m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP;
   // each edge is a light bar: white-hot core fading out at both ends, light spilling inward onto the graph.
   // working: the spill swells into smooth rolling "mountains" and the whole frame breathes
   const breathe = busy ? .5 + .5 * Math.sin(t * 1.8) : .5, H0 = busy ? 16 + 10 * breathe : 12;
@@ -536,7 +539,7 @@ function drawFrame(t) {
 function drawMain(t) {
   if (!nodes.length) return;
   const [x, y] = S(MAIN.d), rgb = CAT.main.rgb, m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
-  const busy = m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < 20;
+  const busy = m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP;
   const pulse = still ? .6 : (Math.sin(t * (busy ? 4 : 1.5)) + 1) / 2;
   cx.save(); cx.lineCap = 'round';
   for (const n of mainTouched) {  // lines to what it is working on
@@ -774,12 +777,12 @@ function renderLog(log, now) {
   for (const [name, a] of Object.entries(active)) {
     if (a.kind !== 'agent') continue;
     const seen = Math.max(a.since, (last[name] || {}).ts || 0), quiet = Math.round(now - seen);
-    chip(quiet < 20 ? `${name} working` : `${name} quiet ${quiet}s`, quiet < 20 ? 'working' : 'quiet', name);
+    chip(quiet < BUSY_CAP ? `${name} working` : `${name} quiet ${quiet}s`, quiet < BUSY_CAP ? 'working' : 'quiet', name);
   }
   for (const e of log.slice(-30)) if (e.what === 'done' && !active[e.who] && now - e.ts < 300) chip(`${e.who} done ✓`, 'done', e.who);
   const m = last.main;
-  if (m) chip(m.what === 'idle' ? `main idle ${Math.round(now - m.ts)}s` : now - m.ts < 20 ? 'main working' : `main quiet ${Math.round(now - m.ts)}s`,
-              m.what === 'idle' ? 'idle' : now - m.ts < 20 ? 'working' : 'quiet', 'main');
+  if (m) chip(m.what === 'idle' ? `main idle ${Math.round(now - m.ts)}s` : now - m.ts < BUSY_CAP ? 'main working' : `main quiet ${Math.round(now - m.ts)}s`,
+              m.what === 'idle' ? 'idle' : now - m.ts < BUSY_CAP ? 'working' : 'quiet', 'main');
   const newest = log.length ? log[log.length - 1].ts : 0;
   document.getElementById('ago').textContent = newest ? `last event ${Math.round(now - newest)}s ago` : 'no events yet';
   if (newest === lastLogTs) return;
