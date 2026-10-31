@@ -969,15 +969,18 @@ def serve(root, idle=None):
 
         def _post(self):
             """POST /do {sec, text, note, action}: open Claude on that board task, check if it is done, or mark it done.
-            Only exact tasks on the board are accepted."""
+            Only exact tasks on the board are accepted. POST /run {id, input}: run a vault agent or skill in a new Claude session."""
             ok_host = self.headers.get("Host", "") in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
-            if self.path != "/do" or not ok_host or self.headers.get("X-Vault-Token") != token:
+            if self.path not in ("/do", "/run") or not ok_host or self.headers.get("X-Vault-Token") != token:
                 return self.send_error(403)
             try:
                 req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 20000)))
-                sec, text = req["sec"], req["text"]
+                key = req["id"] if self.path == "/run" else (req["sec"], req["text"])
             except (ValueError, KeyError, TypeError):
                 return self.send_error(400)
+            if self.path == "/run":
+                return self._run(str(key), " ".join(str(req.get("input") or "").split())[:2000])
+            sec, text = key
             if text not in read_board().get(sec, []):
                 return self.send_error(404, "not a task on the board")
             user_note = " ".join(str(req.get("note") or "").split())[:2000]  # one line: it may land in the board
@@ -993,6 +996,20 @@ def serve(root, idle=None):
             prompt = task_prompt(sec, text) + (f" -- My note: {user_note}" if user_note else "")
             note = launch_claude(prompt, find_session(m[1]) if m else None)
             log_event("main", "Launch", note + ": " + text[:60])
+            self._json({"note": note})
+
+        def _run(self, rel, ask):
+            """Only agent and skill files that are in the vault; the page sends the star's id."""
+            kind = ("agent" if re.fullmatch(r"(?:[\w.-]+/)*agents/[\w-]+\.md", rel)
+                    else "skill" if re.fullmatch(r"(?:[\w.-]+/)*skills/[\w-]+/SKILL\.md", rel) else None)
+            if not kind or ".." in rel.split("/") or not os.path.isfile(os.path.join(root, rel)):
+                return self.send_error(404, "not an agent or skill in the vault")
+            name = rel.split("/")[-2] if kind == "skill" else rel.split("/")[-1][:-3]
+            how = f'the {name} agent (Agent tool, subagent_type "{name}")' if kind == "agent" else f"the {name} skill (Skill tool)"
+            note = launch_claude(f"Run {how}; its definition is {os.path.join(root, rel)}. "
+                                 f"Task: {ask or 'what it is for; ask me first if it needs input'}. Check the vault first. "
+                                 "Ask me before anything public, outward-facing or irreversible.")
+            log_event("main", "Run", f"{name}: {note}"[:120])
             self._json({"note": note})
 
         def _json(self, obj):

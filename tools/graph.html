@@ -31,6 +31,10 @@
   #info button.nb.task { word-break:normal; overflow-wrap:anywhere; margin-top:4px; }
   #info .prog { margin:2px 0 8px 10px; }
   #zmain.on { border-color:rgb(255,110,170); box-shadow:0 0 10px rgba(255,110,170,.7); }
+  #info textarea.runin { display:block; width:100%; box-sizing:border-box; margin-top:8px; background:#0e1c18; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:6px 8px; font:inherit; resize:vertical; }
+  #info button.run { margin-top:6px; width:100%; padding:6px 10px; border-radius:5px; border:1px solid rgb(180,140,255); background:rgb(180,140,255); color:#0b1512; font:inherit; font-weight:bold; cursor:pointer; }
+  #info button.run:hover { filter:brightness(1.12); }
+  #info .runmsg { color:var(--muted); font-size:.85em; margin-top:6px; min-height:1.2em; }
   #info code { display:block; background:#0e1c18; border:1px solid var(--line); padding:6px 8px; border-radius:4px; word-break:break-all; user-select:all; }
   #info .x { position:absolute; top:10px; right:12px; background:none; border:0; color:var(--muted); font-size:18px; cursor:pointer; }
   @media (max-width:640px) { #info { width:auto; left:0; top:auto; height:48vh; border-left:0; border-top:1px solid var(--line); } #legend { display:none; } }
@@ -753,6 +757,7 @@ let raf = null;
 function loop(ms) { tick(ms); draw(ms / 1000); raf = still ? null : requestAnimationFrame(loop); }
 function frame() { if (still || raf === null) { tick(performance.now()); draw(performance.now() / 1000); } }
 
+const runDraft = {};
 function el(tag, text, cls) { const d = document.createElement(tag); if (text != null) d.textContent = text; if (cls) d.className = cls; return d; }
 
 function select(n, center = true, instant = false) {
@@ -796,6 +801,22 @@ function select(n, center = true, instant = false) {
   if (n !== MAIN) box.appendChild(el('div', n.cat === 'agent' ? 'call this agent' : n.cat === 'skill' ? 'use this skill' : 'open from a terminal', 'sec'));
   if (n !== MAIN) box.appendChild(el('code', n.cat === 'agent' ? `Agent: ${label(n.id)}` : n.cat === 'skill' ? `/${label(n.id)}` :
     n.kind === 'entity' ? `python tools/vault.py entity ${n.id}` : `python tools/vault.py note ${label(n.id)}`));
+  if (n.cat === 'agent' || n.cat === 'skill') {  // run it in a new Claude session (server: POST /run)
+    const ask = el('textarea', null, 'runin'), go = el('button', '▶ Run in Claude', 'run'), msg = el('div', null, 'runmsg');
+    ask.rows = 2; ask.maxLength = 2000; ask.placeholder = 'What should it do? (optional)';
+    ask.value = runDraft[n.id] || ''; ask.oninput = () => runDraft[n.id] = ask.value;  // survives a panel rebuild
+    go.onclick = async () => {
+      msg.textContent = 'Opening Claude…';
+      try {
+        const r = await fetch('run', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vault-Token': TOKEN },
+          body: JSON.stringify({ id: n.id, input: ask.value.trim() }) });
+        if (r.status === 403) { msg.textContent = 'Graph server restarted. Reloading the page…'; return setTimeout(() => location.reload(), 1200); }
+        msg.textContent = r.ok ? `Opening Claude: ${(await r.json()).note}.` : 'Failed: HTTP ' + r.status;
+        if (r.ok) delete runDraft[n.id];
+      } catch { msg.textContent = 'Graph server is not running. Run: python tools/vault.py ui'; }
+    };
+    box.append(ask, go, msg);
+  }
   box.style.display = 'block';
   if (center) {  // bring the selected star into the clear (tinted) space left of the panel
     const ins = insets();
