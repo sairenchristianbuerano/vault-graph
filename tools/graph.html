@@ -474,12 +474,6 @@ function draw(t) {
     cx.shadowColor = `rgba(${HI},1)`; cx.shadowBlur = 10 + 14 * pulse;
     cx.strokeStyle = `rgba(${HI},${.55 + .45 * pulse})`; cx.lineWidth = 2 + 1.2 * pulse;
     cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
-    if (!still) {
-      const f = (t * .45 + e.ph / 6.283) % 1, px = x1 + (x2 - x1) * f, py = y1 + (y2 - y1) * f;
-      const g = cx.createRadialGradient(px, py, 0, px, py, 10);
-      g.addColorStop(0, 'rgba(220,255,235,.95)'); g.addColorStop(1, `rgba(${HI},0)`);
-      cx.shadowBlur = 0; cx.fillStyle = g; cx.beginPath(); cx.arc(px, py, 10, 0, 6.3); cx.fill();
-    }
   }
   cx.restore();
   cx.font = 'italic 13px ui-monospace, Consolas, monospace'; cx.textAlign = 'center';
