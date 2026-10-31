@@ -130,7 +130,8 @@
   html, body { font-size:var(--fs); line-height:1.5; }
   #bar { font-size:var(--fs); padding:8px 16px; gap:6px 20px; }
   #legend { left:var(--gap); top:calc(var(--top,44px) + var(--gap)); width:calc(var(--side) - 2 * var(--gap));
-            display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; padding:10px 14px; font-size:var(--fs-s); line-height:1.6; }
+            display:grid; grid-template-columns:max-content max-content; justify-content:space-between; gap:2px 14px; padding:10px 14px; font-size:var(--fs-s); line-height:1.6; }
+  #legend > div { white-space:nowrap; }
   #legend i { width:10px; height:10px; }
   #board { left:var(--gap); top:calc(var(--top,44px) + var(--legendH,0px) + 2 * var(--gap)); bottom:var(--gap);
            width:calc(var(--side) - 2 * var(--gap)); font-size:var(--fs-s); line-height:1.5; }
@@ -254,6 +255,10 @@ function insets() {
 const panelW = () => pinned && innerWidth > 640 ? document.getElementById('info').offsetWidth : 0;
 
 function legendHeight() { document.documentElement.style.setProperty('--legendH', document.getElementById('legend').offsetHeight + 'px'); }
+// the top bar and the legend change height as their text changes (usage line, running agents), not only on a
+// window resize: keep the legend and the task board just below them
+{ const ro = new ResizeObserver(() => { document.documentElement.style.setProperty('--top', topH() + 'px'); legendHeight(); });
+  ro.observe(document.getElementById('bar')); ro.observe(document.getElementById('legend')); }
 function legend() {
   const counts = {}; nodes.forEach(n => counts[n.cat] = (counts[n.cat] || 0) + 1);
   const el = document.getElementById('legend'); el.innerHTML = '';
