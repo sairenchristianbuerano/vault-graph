@@ -8,13 +8,13 @@ Drop one `tools/` folder into an Obsidian (or any Markdown) vault. You get a sel
 
 ## What it does
 
-- **Live graph.** Every note is a star, colored by kind (memory, work, agent, skill). Wikilinks are lines. Issue keys like `ABC-123` and `owner/repo` GitHub links become shared "entity" stars, so two notes that mention the same ticket sit together.
+- **Live graph.** Every note is a star, colored by kind (memory, work, agent, skill), and agents, skills and entities also get their own shape (diamond, triangle, hexagon). Wikilinks are lines. Issue keys like `ABC-123` and `owner/repo` GitHub links become shared "entity" stars, so two notes that mention the same ticket sit together.
 - **Self-healing indexes.** `heal.py` rebuilds `HOME.md` and one `_index.md` per repo, adds missing front-matter, repoints renamed wikilinks, and reports broken links and duplicate names.
 - **Secret scan.** Tokens and keys in notes are reported, and an optional git pre-commit hook blocks the commit.
 - **Search without an AI.** `search`, `note`, `related`, `path` and `entity` answer from the files in milliseconds. `path` also lights up the chain in the UI.
-- **Task board.** A plain Markdown file with five sections, priorities, progress bars, a "NEED YOU" glow for things only a person can do, and "CONTINUE #1..3" picks for what to do next.
+- **Task board.** A plain Markdown file with five sections, priorities, progress bars, a "NEED YOU" glow for things only a person can do, and "CONTINUE #1..3" picks for what to do next. A task that links a note with `[[note]]` puts five progress pips beside that star, and clicking the star lists its tasks.
 - **Do it in Claude.** Click a task and Claude Code opens on it: it resumes the session the task came from, forks it if that session is open right now, or types the task into the live session when it runs in [wmux](#do-it-in-claude-and-wmux).
-- **Claude Code hooks.** Before each prompt, the top vault matches are added to Claude's context. Tool calls, subagents and skills show up live in the activity panel and as pulsing stars.
+- **Claude Code hooks.** Before each prompt, the top vault matches are added to Claude's context. Tool calls, subagents and skills show up live in the activity panel and as pulsing stars. A star they work on outside the view gets a marker on the frame edge; click it to fly there.
 - **Usage in the top bar.** Token counts from your local Claude Code transcripts. Plan limits (5-hour and weekly %) are available as an [opt-in](#security-notes).
 - **Standard library only.** Python 3.10+, no installs. The UI is one HTML file with no external requests.
 
@@ -152,7 +152,7 @@ Click a task, then **Do it in Claude**. The server:
 - if the task has `(s:...)` and that transcript exists: resumes it with `--resume`, or forks it with `--fork-session` when it was active in the last 10 minutes; if the transcript is over 20 MB it starts a fresh session with a pointer instead;
 - starts `claude --permission-mode <mode>` in the session's folder (or `launcher.cwd`, default the vault).
 
-**Type prompt** adds your own note to the prompt. **Mark done** moves the task to Done with your note. **Copy prompt** puts the same prompt on the clipboard.
+**Type prompt** adds your own note to the prompt. **Mark done** moves the task to Done with your note. **Check if it's done** starts a fresh Claude session that checks live evidence for that one task, then moves it to Done or refreshes its status. **Copy prompt** puts the same prompt on the clipboard.
 
 **Where it opens**
 

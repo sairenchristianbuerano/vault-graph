@@ -704,9 +704,15 @@ def mark_done(sec, text, note, path=None):
     _write_board(path, lines)
 
 
-def task_prompt(sec, text):
-    """Same wording as copyPrompt() in graph.html."""
+def task_prompt(sec, text, check=False):
+    """Same wording as copyPrompt() in graph.html. check=True: only verify whether the task is done."""
     plain_text = re.sub(r"\[\[([^\]|]+)(\|[^\]]*)?\]\]", r"\1", strip_tags(text))
+    if check:
+        return (f"Check if this task from my board is done ({BOARD_REL}, {sec}): {plain_text} -- Check the memory vault first. "
+                "Verify it against live evidence: pull request or issue state, sent mail or drafts, tickets, release registries, dates. "
+                "If it is done, move it to Done with a one-line evidence note. "
+                "If not, refresh its status text and [done N%] and tell me in one line what is still missing. "
+                "Change nothing outside the board: no emails, comments, pushes or ticket edits.")
     return (f"Task from my board ({BOARD_REL}, {sec}): {plain_text} -- Check the memory vault first, then do this task. "
             "Ask me before anything public, outward-facing or irreversible, and update the board when it is done.")
 
@@ -962,7 +968,7 @@ def serve(root, idle=None):
                 self.send_error(500)
 
         def _post(self):
-            """POST /do {sec, text, note, action}: open Claude on that board task, or mark it done.
+            """POST /do {sec, text, note, action}: open Claude on that board task, check if it is done, or mark it done.
             Only exact tasks on the board are accepted."""
             ok_host = self.headers.get("Host", "") in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
             if self.path != "/do" or not ok_host or self.headers.get("X-Vault-Token") != token:
@@ -979,6 +985,10 @@ def serve(root, idle=None):
                 mark_done(sec, text, user_note)
                 log_event("main", "Done", text[:80])
                 return self._json({"note": "moved to Done"})
+            if req.get("action") == "check":  # a fresh session: a check needs no history, and must not edit the task's own session
+                note = launch_claude(task_prompt(sec, text, check=True) + (f" -- My note: {user_note}" if user_note else ""))
+                log_event("main", "Check", note + ": " + text[:60])
+                return self._json({"note": note})
             m = re.search(r"\(s:([0-9a-f]{8})\)", text)
             prompt = task_prompt(sec, text) + (f" -- My note: {user_note}" if user_note else "")
             note = launch_claude(prompt, find_session(m[1]) if m else None)

@@ -28,6 +28,8 @@
   #info .sec { color:var(--muted); margin:12px 0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
   #info button.nb { display:block; width:100%; text-align:left; background:none; border:0; border-left:2px solid var(--line); color:var(--text); font:inherit; padding:3px 8px; cursor:pointer; word-break:break-all; }
   #info button.nb:hover { border-left-color:rgb(var(--hi)); color:rgb(var(--hi)); }
+  #info button.nb.task { word-break:normal; overflow-wrap:anywhere; margin-top:4px; }
+  #info .prog { margin:2px 0 8px 10px; }
   #info code { display:block; background:#0e1c18; border:1px solid var(--line); padding:6px 8px; border-radius:4px; word-break:break-all; user-select:all; }
   #info .x { position:absolute; top:10px; right:12px; background:none; border:0; color:var(--muted); font-size:18px; cursor:pointer; }
   @media (max-width:640px) { #info { width:auto; left:0; top:auto; height:48vh; border-left:0; border-top:1px solid var(--line); } #legend { display:none; } }
@@ -178,7 +180,7 @@
 <div id="legend"></div>
 <canvas id="c"></canvas>
 <div id="info"></div>
-<div id="tm" role="dialog" aria-modal="true" aria-labelledby="tmsec"><div class="box"><div class="meta"><span id="tmsec" class="sec"></span><span id="tmtags"></span></div><p id="tmbody" class="body"></p><div id="tmnotebox" hidden><label for="tmnote" class="sec">Your prompt or note</label><textarea id="tmnote" rows="3" maxlength="2000" placeholder="e.g. done: merged the fix on Friday. Or: use the shorter draft."></textarea></div><div class="acts"><button id="tmgo" class="go">▶ Do it in Claude</button><button id="tmtype" aria-expanded="false">✎ Type prompt</button><button id="tmdone">✓ Mark done</button><button id="tmcopy">Copy prompt</button><button id="tmnode">Show in graph</button><button id="tmx">Close</button></div><div id="tmmsg" class="msg" aria-live="polite"></div></div></div>
+<div id="tm" role="dialog" aria-modal="true" aria-labelledby="tmsec"><div class="box"><div class="meta"><span id="tmsec" class="sec"></span><span id="tmtags"></span></div><p id="tmbody" class="body"></p><div id="tmnotebox" hidden><label for="tmnote" class="sec">Your prompt or note</label><textarea id="tmnote" rows="3" maxlength="2000" placeholder="e.g. done: merged the fix on Friday. Or: use the shorter draft."></textarea></div><div class="acts"><button id="tmgo" class="go">▶ Do it in Claude</button><button id="tmtype" aria-expanded="false">✎ Type prompt</button><button id="tmdone">✓ Mark done</button><button id="tmcheck" title="A new Claude session checks live evidence (PRs, issues, mail, tickets, dates) for this task only, then moves it to Done or updates its status">🔍 Check if it's done</button><button id="tmcopy">Copy prompt</button><button id="tmnode">Show in graph</button><button id="tmx">Close</button></div><div id="tmmsg" class="msg" aria-live="polite"></div></div></div>
 <div id="board"><header id="boardh" title="Click to collapse or expand"><b>Tasks</b><span id="boardn" class="ts"></span><input id="bq" type="search" placeholder="Search tasks: words, ABC-123, need you, high" aria-label="Search tasks"></header><div id="boardb"></div></div>
 <div id="log"><header id="logh" title="Click to collapse or expand"><b>Activity</b><span id="chips"></span><span id="ago" class="ts"></span></header><div class="body" id="logb"></div></div>
 <div id="ctl">
@@ -192,12 +194,14 @@ const cv = document.getElementById('c'), cx = cv.getContext('2d');
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const HI = '79,192,141', EDGE = '120,160,145', BG = '#0b1512';
 // colour per node type (agents stand out)
+// sides: each kind gets its own outline (diamond, triangle, hexagon), so you can tell them apart without
+// relying on colour; notes stay round
 const CAT = {
-  agent:  { rgb: '180,140,255', name: 'agent' },
-  skill:  { rgb: '240,184,90',  name: 'skill' },
+  agent:  { rgb: '180,140,255', name: 'agent', sides: 4 },
+  skill:  { rgb: '240,184,90',  name: 'skill', sides: 3 },
   memory: { rgb: '111,183,232', name: 'memory' },
   work:   { rgb: '150,185,170', name: 'work' },
-  entity: { rgb: '190,200,140', name: 'ticket · repo' },
+  entity: { rgb: '190,200,140', name: 'ticket · repo', sides: 6 },
   note:   { rgb: '130,150,142', name: 'other' },
   main:   { rgb: '255,110,170', name: 'Claude (main)' },
 };
@@ -253,6 +257,7 @@ function legend() {
     if (!counts[k]) continue;
     const d = document.createElement('div');
     const dot = document.createElement('i'); dot.style.background = `rgb(${c.rgb})`; dot.style.color = `rgb(${c.rgb})`;
+    if (c.sides) { dot.style.borderRadius = '0'; dot.style.clipPath = `polygon(${poly(c.sides, (cs, sn) => `${50 + 50 * cs}% ${50 + 50 * sn}%`)})`; }
     d.appendChild(dot); d.appendChild(document.createTextNode(`${c.name} (${counts[k]})`)); el.appendChild(d);
     d.dataset.cat = k; d.onclick = () => showCat(catFocus === k ? null : k);
   }
@@ -439,15 +444,31 @@ const radius = n => n === MAIN ? 9 * Math.min(1.6, Math.max(.8, view.k)) : ((n.c
 const neighbours = n => n === MAIN ? new Map(mainTouched.map(m => [m, { a: MAIN, b: m, k: 'working on' }])) : neighbours0(n);
 const neighbours0 = n => { const s = new Map(); edges.forEach(e => { if (e.a === n) s.set(e.b, e); if (e.b === n) s.set(e.a, e); }); return s; };
 
+// corner points of a regular polygon, first corner straight up
+const poly = (sides, f) => [...Array(sides)].map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / sides; return f(Math.cos(a), Math.sin(a)); });
 function star(n, x, y, tw, boost) {
-  const rgb = CAT[n.cat].rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.cat === 'agent' ? 5.5 : 4;
+  const c = CAT[n.cat], rgb = c.rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.cat === 'agent' ? 5.5 : 4;
   const g = cx.createRadialGradient(x, y, 0, x, y, r * halo);
   g.addColorStop(0, `rgba(${rgb},${(.25 + .25 * tw) * (boost ? 1.6 : 1)})`); g.addColorStop(1, `rgba(${rgb},0)`);
   cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, r * halo, 0, 6.3); cx.fill();
-  cx.fillStyle = `rgba(${rgb},${boost ? 1 : .55 + .45 * tw})`; cx.beginPath(); cx.arc(x, y, r, 0, 6.3); cx.fill();
+  cx.fillStyle = `rgba(${rgb},${boost ? 1 : .55 + .45 * tw})`; cx.beginPath();
+  if (c.sides) poly(c.sides, (cs, sn) => cx.lineTo(x + r * 1.4 * cs, y + r * 1.4 * sn)); else cx.arc(x, y, r, 0, 6.3);  // polygons a bit bigger so they read as big as a circle
+  cx.fill();
 }
 
+// the visible graph area: right of the task board, left of the info panel, between the top bar and the log
+let vr = { x0: 0, y0: 0, x1: 0, y1: 0 };
+function viewRect() {
+  const lg = document.getElementById('log'), info = document.getElementById('info'), wide = innerWidth > 900;
+  return { x0: (wide ? document.getElementById('board').getBoundingClientRect().right : 0) + 8, y0: topH() + 6,
+           x1: W - (wide && info.style.display === 'block' ? info.offsetWidth : 0) - 8, y1: H - lg.offsetHeight - 18 };
+}
+// open board tasks that link a note ([[note]]): note id -> [[sec, task], ...] for the details panel,
+// and note id -> highest [done N%] for the pips beside the star
+let taskLinks = new Map(), taskProg = new Map();
+const pips = done => '●'.repeat(Math.round(done / 20)) + '○'.repeat(5 - Math.round(done / 20));
 function draw(t) {
+  vr = viewRect(); markers = [];
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
   cx.fillStyle = BG; cx.fillRect(0, 0, W, H);
   for (const s of dust) {
@@ -464,6 +485,15 @@ function draw(t) {
     const [x, y] = S(n.d);
     if (x < -30 || y < -30 || x > W + 30 || y > H + 30) continue;
     star(n, x, y, still ? .6 : (Math.sin(t * n.sp + n.ph) + 1) / 2, n === hover);
+  }
+  for (const [id, done] of taskProg) {  // five pips beside the note: filled = done, 20% each
+    const n = byId[id]; if (!n) continue;
+    const [x, y] = S(n.d), r = radius(n), on = Math.round(done / 20);  // same count as pips()
+    if (x < vr.x0 || x > vr.x1 || y < vr.y0 || y > vr.y1) continue;
+    for (let i = 0; i < 5; i++) {
+      cx.beginPath(); cx.arc(x + r * 1.4 + 7 + i * 6, y, 2, 0, 6.3);
+      if (i < on) { cx.fillStyle = 'rgba(235,245,240,.9)'; cx.fill(); } else { cx.strokeStyle = 'rgba(235,245,240,.45)'; cx.lineWidth = 1; cx.stroke(); }
+    }
   }
   const pulse = still ? .6 : (Math.sin(t * 2.4) + 1) / 2;
   hiFade = hiN.size ? Math.max(0, Math.min(1, (hiUntil - Date.now()) / (HIGHLIGHT_HOURS * 36e5))) : 0;
@@ -508,9 +538,7 @@ function draw(t) {
 // colour = 5-hour plan usage (green < 70%, yellow 70-89%, red 90%+), same scale as the top bar
 let planPct = null;
 function drawFrame(t) {
-  const lg = document.getElementById('log'), info = document.getElementById('info'), wide = innerWidth > 900;
-  const x0 = (wide ? document.getElementById('board').getBoundingClientRect().right : 0) + 8, y0 = topH() + 6;
-  const x1 = W - (wide && info.style.display === 'block' ? info.offsetWidth : 0) - 8, y1 = H - lg.offsetHeight - 18;
+  const { x0, y0, x1, y1 } = vr;
   if (x1 - x0 < 80 || y1 - y0 < 80) return;
   const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : planPct >= 90 ? '255,90,90' : planPct >= 70 ? '230,200,80' : '79,192,141';
   const m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
@@ -550,24 +578,46 @@ function drawFrame(t) {
   cx.restore();
 }
 
-// what a working actor draws (main and running agents alike): dashed lines to the stars it is
-// touching, their names, and rings rolling outward while it works
-function drawWork(x, y, r, rgb, list, busy, pulse, t) {
-  cx.save(); cx.lineCap = 'round';
+// what a working actor draws (main and running agents alike): thin lines fading toward the stars it is
+// touching, their names, and rings rolling outward while it works. A star outside the visible area gets
+// a marker pinned to the frame edge instead of a line running off-screen; click the marker to fly there
+let markers = [];
+function drawWork(who, x, y, r, rgb, list, busy, pulse, t) {
+  const m = 14, inside = (px, py) => px > vr.x0 + m && px < vr.x1 - m && py > vr.y0 + m && py < vr.y1 - m;
+  const text = (s, px, py) => { cx.lineWidth = 3; cx.strokeStyle = 'rgba(5,10,8,.85)'; cx.strokeText(s, px, py); cx.fillStyle = `rgb(${rgb})`; cx.fillText(s, px, py); };
+  // where the way from (fx,fy) out to (tx,ty) crosses the frame edge
+  const edge = (fx, fy, tx, ty) => {
+    const dx = tx - fx, dy = ty - fy;
+    const f = Math.min(dx > 0 ? (vr.x1 - m - fx) / dx : dx < 0 ? (vr.x0 + m - fx) / dx : 1, dy > 0 ? (vr.y1 - m - fy) / dy : dy < 0 ? (vr.y0 + m - fy) / dy : 1);
+    return [fx + dx * f, fy + dy * f];
+  };
+  const pin = (px, py, a, s, n) => {  // arrow pointing off-screen + name, inside the frame
+    const tip = (d, da) => [px + d * Math.cos(a + da), py + d * Math.sin(a + da)];
+    cx.fillStyle = `rgb(${rgb})`; cx.beginPath(); cx.moveTo(...tip(8, 0)); cx.lineTo(...tip(6, 2.4)); cx.lineTo(...tip(6, -2.4)); cx.fill();
+    const L = px <= vr.x0 + m + 1, R = px >= vr.x1 - m - 1, T = py <= vr.y0 + m + 1;
+    cx.textAlign = R ? 'right' : L ? 'left' : 'center';
+    const hw = cx.measureText(s + ' ›').width / 2;  // top/bottom labels: keep the whole name inside the frame
+    text(s + ' ›', R ? px - 12 : L ? px + 12 : Math.min(Math.max(px, vr.x0 + m + hw), vr.x1 - m - hw), py + (L || R ? 4 : T ? 22 : -12));
+    markers.push({ x: px, y: py, n });
+  };
+  cx.save(); cx.lineCap = 'round'; cx.font = '13px ui-monospace, Consolas, monospace';
+  let ax = x, ay = y;  // lines start at the actor, or at its own edge marker when the actor is off-screen
+  const away = !inside(x, y);
+  if (away) { const cx0 = (vr.x0 + vr.x1) / 2, cy0 = (vr.y0 + vr.y1) / 2; [ax, ay] = edge(cx0, cy0, x, y); }
   for (const n of list) {
-    const [nx, ny] = S(n.d);
-    cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 6 + 8 * pulse;
-    cx.strokeStyle = `rgba(${rgb},${.25 + .35 * pulse})`; cx.lineWidth = 1.4;
-    cx.setLineDash([4, 6]); cx.lineDashOffset = -t * 20;
-    cx.beginPath(); cx.moveTo(x, y); cx.lineTo(nx, ny); cx.stroke();
+    let [nx, ny] = S(n.d);
+    const off = !inside(nx, ny);
+    if (off && away) continue;  // both ends off-screen: nothing to show
+    if (off) [nx, ny] = edge(x, y, nx, ny);
+    const g = cx.createLinearGradient(ax, ay, nx, ny);
+    g.addColorStop(0, `rgba(${rgb},${.5 + .3 * pulse})`); g.addColorStop(1, `rgba(${rgb},${off ? .55 : .12})`);
+    cx.strokeStyle = g; cx.lineWidth = 1.2;
+    cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(nx, ny); cx.stroke();
+    if (off) { const [sx, sy] = S(n.d); pin(nx, ny, Math.atan2(sy - y, sx - x), label(n.id), n); }
+    else { cx.textAlign = 'center'; text(label(n.id), nx, ny + radius(n) + 16); }
   }
+  if (away) pin(ax, ay, Math.atan2(y - ay, x - ax), who === MAIN ? 'Claude (main)' : label(who.id), who);
   cx.restore();
-  cx.font = '13px ui-monospace, Consolas, monospace'; cx.textAlign = 'center';
-  for (const n of list) {  // name each end of a dashed line, so you can see what it is working on
-    const [nx, ny] = S(n.d), rn = radius(n);
-    cx.lineWidth = 3; cx.strokeStyle = 'rgba(5,10,8,.85)'; cx.strokeText(label(n.id), nx, ny + rn + 16);
-    cx.fillStyle = `rgb(${rgb})`; cx.fillText(label(n.id), nx, ny + rn + 16);
-  }
   if (busy && !still) for (let i = 0; i < 2; i++) {
     const f = (t * .7 + i / 2) % 1;
     cx.strokeStyle = `rgba(${rgb},${(1 - f) * .7})`; cx.lineWidth = 2;
@@ -580,7 +630,7 @@ function drawMain(t) {
   const [x, y] = S(MAIN.d), rgb = CAT.main.rgb, m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
   const busy = m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP;
   const pulse = still ? .6 : (Math.sin(t * (busy ? 4 : 1.5)) + 1) / 2;
-  drawWork(x, y, radius(MAIN), rgb, mainTouched, busy, pulse, t);
+  drawWork(MAIN, x, y, radius(MAIN), rgb, mainTouched, busy, pulse, t);
   cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
   star(MAIN, x, y, .7 + .3 * pulse, false); cx.restore();
   cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, radius(MAIN) * .35, 0, 6.3); cx.fill();
@@ -595,7 +645,7 @@ function drawActive(t) {
     if ((n.cat !== 'agent' && n.cat !== 'skill') || !active[label(n.id)]) continue;
     const [x, y] = S(n.d), rgb = CAT[n.cat].rgb, r = radius(n), a = active[label(n.id)];
     const pulse = still ? .6 : (Math.sin(t * 4) + 1) / 2;
-    drawWork(x, y, r, rgb, workingOn[label(n.id)] || [], true, pulse, t);
+    drawWork(n, x, y, r, rgb, workingOn[label(n.id)] || [], true, pulse, t);
     cx.save(); cx.shadowColor = `rgba(${rgb},1)`; cx.shadowBlur = 22 + 16 * pulse;
     star(n, x, y, .7 + .3 * pulse, true); cx.restore();
     cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, r * .35, 0, 6.3); cx.fill();
@@ -653,6 +703,15 @@ function select(n, center = true, instant = false) {
   if (n.kind !== 'entity' && n !== MAIN) box.appendChild(el('div', n.id, 'path'));
   if (n.desc) box.appendChild(el('div', n.desc, 'desc'));
   if (n.kind !== 'entity' && n !== MAIN) box.appendChild(el('div', 'area: ' + n.repo + (n.type ? ' · type: ' + n.type : '')));
+  const tl = taskLinks.get(n.id) || [];  // the board tasks behind the pips: progress, click to open the task
+  if (tl.length) box.appendChild(el('div', `board tasks (${tl.length})`, 'sec'));
+  for (const [sec, it] of tl) {
+    const p = prio(it), btn = el('button', (p.done >= 0 ? pips(p.done) + '  ' : '') + `${sec}: ${clean(p.text)}`, 'nb task');
+    btn.style.borderLeftColor = `rgb(${SEC[sec]?.[1] || CAT[n.cat].rgb})`; btn.title = 'Open the task';
+    btn.onclick = () => openTask(sec, it);
+    box.appendChild(btn);
+    if (p.done >= 0) box.appendChild(progBar(p.done));
+  }
   const nb = neighbours(n), groups = {};
   for (const [m, e] of nb) {
     const how = n === MAIN ? 'working on (latest first)' : e.a === n ? e.k : e.k === 'links' ? 'linked from' : 'mentioned in';
@@ -683,6 +742,7 @@ function select(n, center = true, instant = false) {
 
 function nearest(mx, my) {
   let best = null, bd = 14;
+  for (const k of markers) if (Math.hypot(k.x - mx, k.y - my) < 16) return k.n;  // edge marker -> its star
   { const [x, y] = S(MAIN.d), d = Math.hypot(x - mx, y - my); if (nodes.length && d < radius(MAIN) + 8) return MAIN; }
   for (const n of nodes) { const [x, y] = S(n.d), d = Math.hypot(x - mx, y - my); if (d < bd) { bd = d; best = n; } }
   return best;
@@ -826,10 +886,18 @@ if (innerWidth <= 900) document.getElementById('board').classList.add('min');
 document.getElementById('boardh').onclick = () => document.getElementById('board').classList.toggle('min');
 const clean = t => t.replace(/\[\[([^\]|]+)(\|[^\]]*)?\]\]/g, '$1').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*`]/g, '');
 function renderBoard(b) {
-  const sig = JSON.stringify(b);
+  const sig = JSON.stringify(b) + built;  // + built: re-link the progress pips once the graph (re)loads
   if (!b || sig === boardSig) return;
   boardSig = sig;
   const prev = seenTasks, now = new Set();
+  taskLinks = new Map(); taskProg = new Map();
+  for (const [sec, its] of Object.entries(b)) if (sec !== 'Done') for (const it of its) {
+    const { text, done } = prio(it), n = /\[\[/.test(text) && nodeFromText(text);
+    if (!n) continue;
+    if (!taskLinks.has(n.id)) taskLinks.set(n.id, []);
+    taskLinks.get(n.id).push([sec, it]);
+    if (done >= 0) taskProg.set(n.id, Math.max(done, taskProg.get(n.id) ?? 0));
+  }
   const box = document.getElementById('boardb'); box.innerHTML = '';
   let total = 0, needYou = 0;
   // ponytail: score = priority + 0.3 x progress (started work is cheaper to finish); Pending waits on others, so skip it
@@ -995,7 +1063,7 @@ function openTask(sec, it) {
     : s && s.active ? 'That session is open right now, so it is forked: same history, new session id, no clash' : '';
   const prog = sec === 'Done' ? 100 : prio(it).done;
   if (prog >= 0) body.after(progBar(prog));
-  tmEl('tmgo').style.display = tmEl('tmdone').style.display = sec === 'Done' ? 'none' : '';
+  tmEl('tmgo').style.display = tmEl('tmdone').style.display = tmEl('tmcheck').style.display = sec === 'Done' ? 'none' : '';
   tmEl('tmnote').value = ''; tmEl('tmnotebox').hidden = true; tmEl('tmtype').setAttribute('aria-expanded', 'false');
   tmEl('tmtype').style.display = sec === 'Done' ? 'none' : '';
   tmEl('tmnode').style.display = nodeFromText(it) ? '' : 'none';
@@ -1013,6 +1081,11 @@ tmEl('tmcopy').onclick = async () => {
 tmEl('tmgo').onclick = async () => {
   tmEl('tmmsg').textContent = 'Opening Claude…';
   try { const j = await tmPost('claude'); if (j) { tmEl('tmmsg').textContent = `Opening Claude: ${j.note}.`; setTimeout(closeTask, 2600); } }
+  catch { tmEl('tmmsg').textContent = 'Graph server is not running. Run: python tools/vault.py ui'; }
+};
+tmEl('tmcheck').onclick = async () => {
+  tmEl('tmmsg').textContent = 'Starting a check…';
+  try { const j = await tmPost('check'); if (j) { tmEl('tmmsg').textContent = `Checking in Claude: ${j.note}. The board updates when it finishes.`; setTimeout(closeTask, 2600); } }
   catch { tmEl('tmmsg').textContent = 'Graph server is not running. Run: python tools/vault.py ui'; }
 };
 tmEl('tmtype').onclick = () => {
