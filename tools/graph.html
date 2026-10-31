@@ -54,6 +54,10 @@
   #board.min > :not(header) { display:none; }
   #board.min { bottom:auto; }
   #board details { border-bottom:1px solid var(--line); }
+  #board header { flex-wrap:wrap; }
+  #bq { order:3; width:100%; margin-top:6px; background:#0b1512; color:inherit; border:1px solid var(--line); border-radius:4px; padding:3px 7px; font:inherit; font-weight:normal; cursor:text; }
+  #bq:focus { outline:1px solid rgba(var(--hi),.7); }
+  #board.min #bq { display:none; }
   #board summary { padding:5px 10px; cursor:pointer; font-weight:bold; list-style:none; display:flex; justify-content:space-between; }
   #board summary::-webkit-details-marker { display:none; }
   #board summary .n { color:var(--muted); font-weight:normal; }
@@ -175,7 +179,7 @@
 <canvas id="c"></canvas>
 <div id="info"></div>
 <div id="tm" role="dialog" aria-modal="true" aria-labelledby="tmsec"><div class="box"><div class="meta"><span id="tmsec" class="sec"></span><span id="tmtags"></span></div><p id="tmbody" class="body"></p><div id="tmnotebox" hidden><label for="tmnote" class="sec">Your prompt or note</label><textarea id="tmnote" rows="3" maxlength="2000" placeholder="e.g. done: merged the fix on Friday. Or: use the shorter draft."></textarea></div><div class="acts"><button id="tmgo" class="go">▶ Do it in Claude</button><button id="tmtype" aria-expanded="false">✎ Type prompt</button><button id="tmdone">✓ Mark done</button><button id="tmcopy">Copy prompt</button><button id="tmnode">Show in graph</button><button id="tmx">Close</button></div><div id="tmmsg" class="msg" aria-live="polite"></div></div></div>
-<div id="board"><header id="boardh" title="Click to collapse or expand"><b>Tasks</b><span id="boardn" class="ts"></span></header><div id="boardb"></div></div>
+<div id="board"><header id="boardh" title="Click to collapse or expand"><b>Tasks</b><span id="boardn" class="ts"></span><input id="bq" type="search" placeholder="Search tasks: words, TR-123, need you, high" aria-label="Search tasks"></header><div id="boardb"></div></div>
 <div id="log"><header id="logh" title="Click to collapse or expand"><b>Activity</b><span id="chips"></span><span id="ago" class="ts"></span></header><div class="body" id="logb"></div></div>
 <div id="ctl">
   <button id="zin" title="Zoom in (+)">+</button>
@@ -859,6 +863,24 @@ function renderBoard(b) {
   }
   seenTasks = now;
   document.getElementById('boardn').innerHTML = (needYou ? `<span class="needyou">● ${needYou} need you</span>` : '') + `${total} active`;
+  filterBoard();
+}
+// task search: every word must appear in the task or its tags ("need you", "high", a session id); Esc clears
+const bq = document.getElementById('bq');
+bq.onclick = e => e.stopPropagation();
+bq.oninput = () => filterBoard();
+bq.onkeydown = e => { if (e.key === 'Escape') { bq.value = ''; filterBoard(); } };
+function filterBoard() {
+  const words = bq.value.toLowerCase().split(/\s+/).filter(Boolean);
+  for (const d of document.querySelectorAll('#boardb details')) {
+    let hits = 0;
+    for (const li of d.querySelectorAll('li')) {
+      const ok = words.every(w => (li.textContent + ' ' + li.title).toLowerCase().includes(w));
+      li.style.display = ok ? '' : 'none'; hits += ok;
+    }
+    d.style.display = hits || !words.length ? '' : 'none';
+    if (words.length && hits) d.open = true;
+  }
 }
 // "[85%] [done 30%] @you text (s:abcd1234)" -> priority, progress, needs-you flag, plain text, session
 function prio(it) {
