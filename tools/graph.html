@@ -1213,6 +1213,9 @@ function prio(it) {
 let SESS = {};
 // Claude Code token use from the local transcripts; plan % only when "plan_usage": true in vault-graph.json
 const fmtTok = n => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(n);
+// time left until a plan limit resets: 1h 12m, or 4d 5h
+const left = s => { const m = Math.max(0, Math.round((Date.parse(s) - Date.now()) / 60000)), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`; };
 function renderUsage(u) {
   const el = document.getElementById('usage');
   if (!u || !u.scanned) { el.textContent = 'usage: counting…'; return; }
@@ -1229,8 +1232,8 @@ function renderUsage(u) {
   const upd = ` · updated ${new Date(u.scanned * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   if (p.five_hour || p.seven_day) {
     const at = s => new Date(Date.parse(s) + 30000);  // round to the nearest minute: 21:59:59.8 shows as 10:00 PM, like Claude
-    const rs = p.five_hour ? ` (resets ${at(p.five_hour.resets).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '';
-    const rw = p.seven_day ? ` (resets ${at(p.seven_day.resets).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })})` : '';
+    const rs = p.five_hour ? ` (resets ${at(p.five_hour.resets).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, ${left(p.five_hour.resets)} left)` : '';
+    const rw = p.seven_day ? ` (resets ${at(p.seven_day.resets).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}, ${left(p.seven_day.resets)} left)` : '';
     el.append('plan ', part('5-hour', 0, p.five_hour?.pct ?? 0), rs, ' · ', part('weekly', 0, p.seven_day?.pct ?? 0), rw, upd);
   } else {
     el.append('usage ', part('today', u.day), ' · ', part('7 days', u.week), upd, p.error ? ` · plan %: ${p.error}` : '');
