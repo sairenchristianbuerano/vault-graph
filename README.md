@@ -88,7 +88,7 @@ personal/repos/<repo>/memory/
 
 ![Two universes: work on the left, personal on the right, a board tab for each](docs/screenshots/universes.png)
 
-- **Page:** each universe is its own cluster, left to right in the order you list them, named at its top-left. Links between universes stay in a star's details but are not drawn and do not pull the clusters together. The centre star (YOU) moves between them to whatever Claude is working on. There is a fit button per universe (keys `1`, `2`, ...).
+- **Page:** each universe is its own cluster, left to right in the order you list them, named at its top-left. Links between universes stay in a star's details but are not drawn and do not pull the clusters together. The centre star (YOU) moves between them to whatever Claude is working on. There is a fit button per universe (keys `1`, `2`, ...). Each board is its universe's sun: a bigger yellow star fixed at the centre. The ⚙ button holds display settings for this browser; the first one hides the universe names.
 - **Boards:** one per universe (`<universe>/<board>`), with a tab for each on the Tasks panel. A new task goes to the tab you are on. From the command line: `python tools/vault.py task --personal add next "..."`.
 - **Indexes:** `heal.py` builds `HOME.md` with a section per universe, and the repo and global indexes inside each one.
 - **Files outside the universe folders** (a top-level `CLAUDE.md`, `.claude/agents/`) join the universe they link to most, or the last one in the list if they link to nothing.

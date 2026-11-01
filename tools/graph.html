@@ -143,6 +143,8 @@
   #ctl button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; min-width:34px; height:34px; font:inherit; cursor:pointer; }
   #ctl button:hover { border-color:rgb(var(--hi)); color:rgb(var(--hi)); }
   #ctl button.uni { font-size:11px !important; }
+  #setbox { position:fixed; z-index:3; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px 12px; min-width:220px; box-shadow:0 6px 20px #0008; }
+  #setbox label { display:flex; gap:8px; align-items:center; margin-top:6px; cursor:pointer; white-space:nowrap; }
 
   /* ---- layout v2: bigger type, left column (legend + tasks), bottom activity, right details ---- */
   *, *::before, *::after { box-sizing:border-box; }
@@ -211,7 +213,9 @@
   <button id="zfit" title="Fit whole graph (f)">fit</button>
   <button id="zhi" title="Zoom to highlight (h)">◎</button>
   <button id="zmain" title="Follow YOU: zoom to it and what it is working on, and keep the camera on it as it moves (m). Click again, drag the map, or pick another star to stop." style="color:rgb(255,110,170)">●</button>
+  <button id="zset" title="Settings" aria-haspopup="dialog" aria-expanded="false">⚙</button>
 </div>
+<div id="setbox" role="dialog" aria-label="Graph settings" hidden><b>Settings</b><label><input type="checkbox" id="s_uninames"> Universe names</label></div>
 <script>
 const cv = document.getElementById('c'), cx = cv.getContext('2d');
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -229,6 +233,7 @@ const CAT = {
   work:   { rgb: '150,185,170', name: 'work' },
   entity: { rgb: '190,200,140', name: 'ticket · repo', sides: 6 },
   note:   { rgb: '130,150,142', name: 'other' },
+  sun:    { rgb: '255,205,80',  name: 'board (sun)' },  // a board: its universe's sun, pinned at the centre
   main:   { rgb: '255,110,170', name: YOU },
 };
 // the main session is its own star: biggest, unique colour, drifts toward what it is working on
@@ -241,10 +246,14 @@ function panToMain() {  // centre the main star at the current zoom; leaves the 
   if (pinned || !nodes.length) return;
   glideTo(MAIN.p.x, MAIN.p.y, view.k);
 }  // {list, t0}: the main star's lines pulling back in after it went idle  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
-const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
+const catOf = n => Object.values(BOARD_FILES).includes(n.id) ? 'sun' : n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
 // universes ("universes" in vault-graph.json, e.g. work and personal): each one pulled to its own x-centre, left to
 // right in the order listed, with a clear gap; links between them neither pull nor draw. None set = one sky, as before
+// settings (the gear): this browser's own display choices, kept in localStorage
+const SET = { uniNames: true };
+try { Object.assign(SET, JSON.parse(localStorage.getItem('vaultSettings') || '{}')); } catch (e) {}
+const saveSet = () => { try { localStorage.setItem('vaultSettings', JSON.stringify(SET)); } catch (e) {} };
 const UNI_RGB = ['100,150,230', '235,150,95', '170,130,235', '90,200,160'];
 let UNIS = [], UNI = {}, uniX = {}, uniBox = {};
 function placeUnis(g) {
@@ -290,7 +299,7 @@ let restore = null;
 try { restore = JSON.parse(sessionStorage.getItem('vaultGraph') || 'null'); sessionStorage.removeItem('vaultGraph'); } catch (e) {}
 let active = {};  // name -> {kind, since, desc} from the agent/skill hooks
 let built = null, view = { x: 0, y: 0, k: 1 }, hover = null, pinned = null, touched = false, dust = [];
-const LAYOUT_V = 2;  // bump when the layout rules change: a reload then lays the sky out again instead of restoring old spots
+const LAYOUT_V = 3;  // bump when the layout rules change: a reload then lays the sky out again instead of restoring old spots
 if (restore && restore.v !== LAYOUT_V) { restore.pos = {}; restore.view = null; }
 if (restore) { pos = restore.pos || {}; Object.assign(view, restore.view || {}); touched = !!restore.touched; }
 const label = id => { const p = id.split('/'); const f = p.pop().replace(/\.md$/, ''); return f === 'SKILL' ? p.pop() : f; };
@@ -405,7 +414,7 @@ function load(g) {
   let fresh = 0;
   nodes = Object.keys(g.nodes).map(id => {
     const n = { id, ...g.nodes[id], deg: 0, ph: hash(id) * 6.283, sp: .6 + hash(id + 's') * 1.4, isNew: !pos[id] };
-    n.cat = catOf(n);
+    n.cat = catOf(n); n.sun = n.cat === 'sun';  // the boards are the suns
     if (n.isNew) fresh++;
     return n;
   });
@@ -462,6 +471,7 @@ function layout(iters) {
     }
     for (const n of nodes) {
       const p = n.p;
+      if (n.sun) { p.x = uniX[n.uni] || 0; p.y = 0; p.vx = p.vy = 0; continue; }  // a sun stays at its universe's centre
       p.vx -= (p.x - (uniX[n.uni] || 0)) * .006; p.vy -= p.y * .006;
       const v = Math.hypot(p.vx, p.vy), m = v > 25 ? 25 / v : 1;
       p.x += p.vx * m * a; p.y += p.vy * m * a; p.vx *= .5; p.vy *= .5;
@@ -536,14 +546,14 @@ function fitHighlight(instant) {
 }
 
 const S = p => [p.x * view.k + W / 2 + view.x, p.y * view.k + H / 2 + view.y];
-const radius = n => n === MAIN ? 9 * Math.min(1.6, Math.max(.8, view.k)) : ((n.cat === 'entity' ? 1.8 : n.cat === 'agent' || n.cat === 'subagent' ? 3.6 : 2.6) + Math.min(n.deg, 14) * .25) * Math.min(1.6, Math.max(.7, view.k));
+const radius = n => n === MAIN ? 9 * Math.min(1.6, Math.max(.8, view.k)) : n.sun ? 11 * Math.min(1.6, Math.max(.7, view.k)) : ((n.cat === 'entity' ? 1.8 : n.cat === 'agent' || n.cat === 'subagent' ? 3.6 : 2.6) + Math.min(n.deg, 14) * .25) * Math.min(1.6, Math.max(.7, view.k));
 const neighbours = n => n === MAIN ? new Map(mainTouched.map(m => [m, { a: MAIN, b: m, k: 'working on' }])) : neighbours0(n);
 const neighbours0 = n => { const s = new Map(); edges.forEach(e => { if (e.a === n) s.set(e.b, e); if (e.b === n) s.set(e.a, e); }); return s; };
 
 // corner points of a regular polygon, first corner straight up
 const poly = (sides, f) => [...Array(sides)].map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / sides; return f(Math.cos(a), Math.sin(a)); });
 function star(n, x, y, tw, boost) {
-  const c = CAT[n.cat], rgb = c.rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.cat === 'agent' || n.cat === 'subagent' ? 5.5 : 4;
+  const c = CAT[n.cat], rgb = c.rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.sun ? 6 : n.cat === 'agent' || n.cat === 'subagent' ? 5.5 : 4;
   const g = cx.createRadialGradient(x, y, 0, x, y, r * halo);
   g.addColorStop(0, `rgba(${rgb},${(.25 + .25 * tw) * (boost ? 1.6 : 1)})`); g.addColorStop(1, `rgba(${rgb},0)`);
   cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, r * halo, 0, 6.3); cx.fill();
@@ -582,7 +592,7 @@ function draw(t) {
     cx.fillStyle = gr; cx.fillRect(x - r, y - r, 2 * r, 2 * r);
     const [tx, ty] = S({ x: b.left, y: b.top });
     cx.font = `bold ${Math.round(Math.max(14, Math.min(32, 24 * view.k)))}px ui-monospace, Consolas, monospace`; cx.textAlign = 'left';
-    cx.fillStyle = `rgba(${UNI[u]},.75)`; cx.fillText(u, tx, Math.max(ty - 26, topH() + 26));  // never under the top bar
+    if (SET.uniNames) { cx.fillStyle = `rgba(${UNI[u]},.75)`; cx.fillText(u, tx, Math.max(ty - 26, topH() + 26)); }  // never under the top bar
   }
   cx.lineWidth = Math.max(.6, Math.min(1.2, view.k * .8));
   for (const e of edges) if (!e.x) {  // every link inside a universe drawn plainly; new ones get a fading glow on top below
@@ -631,10 +641,10 @@ function draw(t) {
   cx.restore();  // end of the fading glow
   cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.fillStyle = '#d9e6e0';
   for (const n of nodes) {
-    const show = hiN.has(n.id) || n === hover || (view.k > 1.8 && n.kind === 'note');
+    const show = n.sun || hiN.has(n.id) || n === hover || (view.k > 1.8 && n.kind === 'note');
     if (!show || (pinned && n !== hover) || ((n.cat === 'agent' || n.cat === 'skill') && active[label(n.id)])) continue;  // working ones have their own label
     const [x, y] = S(n.d);
-    cx.fillText(label(n.id), x, y + (hiN.has(n.id) ? 24 : -10));
+    cx.fillText(label(n.id), x, y + (n.sun ? radius(n) + 18 : hiN.has(n.id) ? 24 : -10));
   }
   drawMain(t);
   if (catFocus && !pinned) drawCat(t);
@@ -958,6 +968,17 @@ document.getElementById('zhi').onclick = () => { touched = false; select(null); 
 const fitMain = () => { if (follow) return setFollow(false); touched = true; select(null); fitTo([MAIN, ...mainTouched], 2.5); setFollow(true); };  // zoom to main + what it works on, then follow it
 document.getElementById('zmain').onclick = fitMain;
 const fitUni = u => { touched = true; select(null); fitTo(nodes.filter(n => n.uni === u), 3); };
+{ const box = document.getElementById('setbox'), btn = document.getElementById('zset'), names = document.getElementById('s_uninames');
+  names.checked = SET.uniNames;
+  names.onchange = () => { SET.uniNames = names.checked; saveSet(); frame(); };
+  const show = on => { box.hidden = !on; btn.setAttribute('aria-expanded', on); if (!on) return;
+    const r = btn.getBoundingClientRect();  // beside the gear: to its left in the side column, above it in the bottom row
+    if (r.left > 260) Object.assign(box.style, { top: r.top + 'px', right: innerWidth - r.left + 8 + 'px', left: 'auto', bottom: 'auto' });
+    else Object.assign(box.style, { left: r.left + 'px', bottom: innerHeight - r.top + 8 + 'px', top: 'auto', right: 'auto' });
+    names.focus(); };
+  btn.onclick = () => show(box.hidden);
+  addEventListener('pointerdown', e => { if (!box.hidden && !box.contains(e.target) && e.target !== btn) show(false); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && !box.hidden) { show(false); btn.focus(); } }); }
 addEventListener('keydown', e => {
   if (e.target.closest?.('input, textarea')) return;  // typing in the task search or a note is not a shortcut
   if (e.key === 'f') { touched = true; fitAll(); }
