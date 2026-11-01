@@ -215,7 +215,7 @@
   <button id="zmain" title="Follow YOU: zoom to it and what it is working on, and keep the camera on it as it moves (m). Click again, drag the map, or pick another star to stop." style="color:rgb(255,110,170)">●</button>
   <button id="zset" title="Settings" aria-haspopup="dialog" aria-expanded="false">⚙</button>
 </div>
-<div id="setbox" role="dialog" aria-label="Graph settings" hidden><b>Settings</b><label><input type="checkbox" id="s_uninames"> Universe names</label></div>
+<div id="setbox" role="dialog" aria-label="Graph settings" hidden><b>Settings</b><label><input type="checkbox" id="s_uninames"> Universe names</label><label><input type="checkbox" id="s_frame"> Usage frame (lines around the graph)</label></div>
 <script>
 const cv = document.getElementById('c'), cx = cv.getContext('2d');
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -251,7 +251,7 @@ const catOf = n => Object.values(BOARD_FILES).includes(n.id) ? 'sun' : n.kind ==
 // universes ("universes" in vault-graph.json, e.g. work and personal): each one pulled to its own x-centre, left to
 // right in the order listed, with a clear gap; links between them neither pull nor draw. None set = one sky, as before
 // settings (the gear): this browser's own display choices, kept in localStorage
-const SET = { uniNames: true };
+const SET = { uniNames: true, frame: true };
 try { Object.assign(SET, JSON.parse(localStorage.getItem('vaultSettings') || '{}')); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem('vaultSettings', JSON.stringify(SET)); } catch (e) {} };
 const UNI_RGB = ['100,150,230', '235,150,95', '170,130,235', '90,200,160'];
@@ -547,14 +547,14 @@ function fitHighlight(instant) {
 }
 
 const S = p => [p.x * view.k + W / 2 + view.x, p.y * view.k + H / 2 + view.y];
-const radius = n => n === MAIN ? 9 * Math.min(1.6, Math.max(.8, view.k)) : n.sun ? 11 * Math.min(1.6, Math.max(.7, view.k)) : ((n.cat === 'entity' ? 1.8 : n.cat === 'agent' || n.cat === 'subagent' ? 3.6 : 2.6) + Math.min(n.deg, 14) * .25) * Math.min(1.6, Math.max(.7, view.k));
+const radius = n => n === MAIN ? 9 * Math.min(1.6, Math.max(.8, view.k)) : n.sun ? 5.5 * Math.min(1.6, Math.max(.7, view.k)) : ((n.cat === 'entity' ? 1.8 : n.cat === 'agent' || n.cat === 'subagent' ? 3.6 : 2.6) + Math.min(n.deg, 14) * .25) * Math.min(1.6, Math.max(.7, view.k));
 const neighbours = n => n === MAIN ? new Map(mainTouched.map(m => [m, { a: MAIN, b: m, k: 'working on' }])) : neighbours0(n);
 const neighbours0 = n => { const s = new Map(); edges.forEach(e => { if (e.a === n) s.set(e.b, e); if (e.b === n) s.set(e.a, e); }); return s; };
 
 // corner points of a regular polygon, first corner straight up
 const poly = (sides, f) => [...Array(sides)].map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / sides; return f(Math.cos(a), Math.sin(a)); });
 function star(n, x, y, tw, boost) {
-  const c = CAT[n.cat], rgb = c.rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.sun ? 6 : n.cat === 'agent' || n.cat === 'subagent' ? 5.5 : 4;
+  const c = CAT[n.cat], rgb = c.rgb, r = radius(n) * (.85 + .3 * tw) * (boost && n !== MAIN ? 1.5 : 1), halo = n === MAIN ? 7 : n.sun ? 5 : n.cat === 'agent' || n.cat === 'subagent' ? 5.5 : 4;
   const g = cx.createRadialGradient(x, y, 0, x, y, r * halo);
   g.addColorStop(0, `rgba(${rgb},${(.25 + .25 * tw) * (boost ? 1.6 : 1)})`); g.addColorStop(1, `rgba(${rgb},0)`);
   cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, r * halo, 0, 6.3); cx.fill();
@@ -664,6 +664,7 @@ const pctRgb = p => {
 };
 let planPct = null;
 function drawFrame(t) {
+  if (!SET.frame) return;  // hidden in settings
   const { x0, y0, x1, y1 } = vr;
   if (x1 - x0 < 80 || y1 - y0 < 80) return;
   const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : pctRgb(planPct);  // same green-to-red as the top bar
@@ -978,6 +979,9 @@ const fitUni = u => { touched = true; select(null); fitTo(nodes.filter(n => n.un
 { const box = document.getElementById('setbox'), btn = document.getElementById('zset'), names = document.getElementById('s_uninames');
   names.checked = SET.uniNames;
   names.onchange = () => { SET.uniNames = names.checked; saveSet(); frame(); };
+  const frm = document.getElementById('s_frame');
+  frm.checked = SET.frame;
+  frm.onchange = () => { SET.frame = frm.checked; saveSet(); frame(); };
   const show = on => { box.hidden = !on; btn.setAttribute('aria-expanded', on); if (!on) return;
     const r = btn.getBoundingClientRect();  // beside the gear: to its left in the side column, above it in the bottom row
     if (r.left > 260) Object.assign(box.style, { top: r.top + 'px', right: innerWidth - r.left + 8 + 'px', left: 'auto', bottom: 'auto' });
