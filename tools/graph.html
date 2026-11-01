@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vault Graph</title>
 <meta name="vault-token" content="__VAULT_TOKEN__">
+<meta name="vault-ai" content="__VAULT_AI__">
 <style>
   :root { --bg:#0b1512; --hi:79,192,141; --text:#d9e6e0; --muted:#7d918a; --panel:#08100ee6; --line:#1d2b27; --tint:#050a08d9; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:13px ui-monospace, Consolas, monospace; overflow:hidden; }
@@ -49,7 +50,21 @@
   #log .chip.done { opacity:.85; }
   #log .chip.idle { opacity:.55; }
   #log .body { overflow:auto; padding:4px 10px 8px; line-height:1.55; }
-  #log.min .body { display:none; }
+  #log.min .body, #log.min .newbox { display:none; }
+  /* new task (top of Tasks) and a free prompt (bottom of Activity) */
+  .newbox { display:flex; flex-direction:column; gap:5px; padding:7px 10px; border-bottom:1px solid var(--line); }
+  #log .newbox { border-bottom:0; border-top:1px solid var(--line); }
+  .newbox textarea { width:100%; box-sizing:border-box; background:#0e1c18; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:5px 7px; font:inherit; resize:vertical; }
+  .newbox .row2 { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .newbox select, .newbox button { padding:3px 8px; border-radius:5px; border:1px solid var(--line); background:var(--panel); color:var(--text); font:inherit; cursor:pointer; }
+  .newbox button.go { border-color:rgb(var(--hi)); background:rgb(var(--hi)); color:#0b1512; font-weight:bold; }
+  .newbox button:hover { filter:brightness(1.15); }
+  .newbox .msg { color:var(--muted); font-size:.85em; flex:1 1 100%; min-height:1.1em; }
+  /* one tab per board when the vault is split into universes */
+  .btabs { display:flex; gap:6px; padding:7px 10px 0; }
+  .btabs:empty { display:none; }
+  .btabs button { flex:1; padding:4px 8px; border-radius:5px; border:1px solid var(--line); background:var(--panel); color:var(--muted); font:inherit; cursor:pointer; }
+  .btabs button.on { color:#0b1512; background:rgb(var(--u)); border-color:rgb(var(--u)); font-weight:bold; }
   #log .row { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #log .ts { color:var(--muted); margin-right:6px; }
   #log .who { margin-right:6px; }
@@ -127,6 +142,7 @@
   #ctl { position:fixed; bottom:12px; left:12px; display:flex; gap:6px; z-index:1; }
   #ctl button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; min-width:34px; height:34px; font:inherit; cursor:pointer; }
   #ctl button:hover { border-color:rgb(var(--hi)); color:rgb(var(--hi)); }
+  #ctl button.uni { font-size:11px !important; }
 
   /* ---- layout v2: bigger type, left column (legend + tasks), bottom activity, right details ---- */
   *, *::before, *::after { box-sizing:border-box; }
@@ -187,19 +203,21 @@
 <canvas id="c"></canvas>
 <div id="info"></div>
 <div id="tm" role="dialog" aria-modal="true" aria-labelledby="tmsec"><div class="box"><div class="meta"><span id="tmsec" class="sec"></span><span id="tmtags"></span></div><p id="tmbody" class="body"></p><div id="tmnotebox" hidden><label for="tmnote" class="sec">Your prompt or note</label><textarea id="tmnote" rows="3" maxlength="2000" placeholder="e.g. done: merged the fix on Friday. Or: use the shorter draft."></textarea></div><div class="acts"><button id="tmgo" class="go">▶ Do it in Claude</button><button id="tmtype" aria-expanded="false">✎ Type prompt</button><button id="tmdone">✓ Mark done</button><button id="tmcheck" title="A new Claude session checks live evidence (PRs, issues, mail, tickets, dates) for this task only, then moves it to Done or updates its status">🔍 Check if it's done</button><button id="tmcopy">Copy prompt</button><button id="tmnode">Show in graph</button><button id="tmx">Close</button></div><div id="tmmsg" class="msg" aria-live="polite"></div></div></div>
-<div id="board"><header id="boardh" title="Click to collapse or expand"><b>Tasks</b><span id="boardn" class="ts"></span><input id="bq" type="search" placeholder="Search tasks: words, ABC-123, need you, high" aria-label="Search tasks"></header><div id="boardb"></div></div>
-<div id="log"><header id="logh" title="Click to collapse or expand"><b>Activity</b><span id="chips"></span><span id="ago" class="ts"></span></header><div class="body" id="logb"></div></div>
+<div id="board"><header id="boardh" title="Click to collapse or expand"><b>Tasks</b><span id="boardn" class="ts"></span><input id="bq" type="search" placeholder="Search tasks: words, ABC-123, need you, high" aria-label="Search tasks"></header><div id="btabs" class="btabs" role="tablist" aria-label="Which board"></div><div id="newtask" class="newbox"><textarea id="ntext" rows="2" maxlength="1000" placeholder="New task: describe it (Ctrl+Enter adds it)" aria-label="New task"></textarea><div class="row2"><select id="nsec" aria-label="Section for the new task"><option>Next</option><option>Ongoing</option><option>Open</option><option>Pending</option></select><button id="nadd">+ Add</button><button id="ngo" class="go" title="Adds it to Ongoing and opens a Claude session on it">▶ Add and do it</button><span id="nmsg" class="msg" aria-live="polite"></span></div></div><div id="boardb"></div></div>
+<div id="log"><header id="logh" title="Click to collapse or expand"><b>Activity</b><span id="chips"></span><span id="ago" class="ts"></span></header><div class="body" id="logb"></div><div id="askbox" class="newbox"><textarea id="atext" rows="1" maxlength="2000" placeholder="Prompt Claude: opens a new session with this (Ctrl+Enter)" aria-label="Prompt for a new Claude session"></textarea><div class="row2"><button id="askgo" class="go">▶ Send to Claude</button><span id="amsg" class="msg" aria-live="polite"></span></div></div></div>
 <div id="ctl">
   <button id="zin" title="Zoom in (+)">+</button>
   <button id="zout" title="Zoom out (-)">−</button>
   <button id="zfit" title="Fit whole graph (f)">fit</button>
   <button id="zhi" title="Zoom to highlight (h)">◎</button>
-  <button id="zmain" title="Follow Claude (main): zoom to it and what it is working on, and keep the camera on it as it moves (m). Click again, drag the map, or pick another star to stop." style="color:rgb(255,110,170)">●</button>
+  <button id="zmain" title="Follow YOU: zoom to it and what it is working on, and keep the camera on it as it moves (m). Click again, drag the map, or pick another star to stop." style="color:rgb(255,110,170)">●</button>
 </div>
 <script>
 const cv = document.getElementById('c'), cx = cv.getContext('2d');
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const HI = '79,192,141', EDGE = '120,160,145', BG = '#0b1512';
+// the centre star is you, working through an AI; its name comes from vault-graph.json "ai_name" (default Claude)
+const AI = (n => n && !n.startsWith('__') ? n : 'Claude')(document.querySelector('meta[name=vault-ai]')?.content), YOU = `YOU (${AI})`;
 // colour per node type (agents stand out)
 // sides: each kind gets its own outline (diamond, triangle, hexagon), so you can tell them apart without
 // relying on colour; notes stay round
@@ -211,10 +229,10 @@ const CAT = {
   work:   { rgb: '150,185,170', name: 'work' },
   entity: { rgb: '190,200,140', name: 'ticket · repo', sides: 6 },
   note:   { rgb: '130,150,142', name: 'other' },
-  main:   { rgb: '255,110,170', name: 'Claude (main)' },
+  main:   { rgb: '255,110,170', name: YOU },
 };
 // the main session is its own star: biggest, unique colour, drifts toward what it is working on
-const MAIN = { id: 'main', kind: 'main', cat: 'main', repo: '-', desc: 'This Claude session. It drifts toward the notes it is working on; the lines show what it touched last.',
+const MAIN = { id: 'main', kind: 'main', cat: 'main', repo: '-', desc: `You, working through this ${AI} session. It drifts toward the notes it is working on, in any universe; the lines show what it touched last.`,
                p: { x: 0, y: 0 }, d: { x: 0, y: 0 }, deg: 0, ph: 0, sp: 1 };
 let mainTouched = [], workingOn = {};
 let touchTs = {}, linkAnim = {};
@@ -225,6 +243,36 @@ function panToMain() {  // centre the main star at the current zoom; leaves the 
 }  // {list, t0}: the main star's lines pulling back in after it went idle  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
 const catOf = n => n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
+// universes ("universes" in vault-graph.json, e.g. work and personal): each one pulled to its own x-centre, left to
+// right in the order listed, with a clear gap; links between them neither pull nor draw. None set = one sky, as before
+const UNI_RGB = ['100,150,230', '235,150,95', '170,130,235', '90,200,160'];
+let UNIS = [], UNI = {}, uniX = {}, uniBox = {};
+function placeUnis(g) {
+  UNIS = (g.universes || []).filter(u => nodes.some(n => n.uni === u));
+  UNI = Object.fromEntries(UNIS.map((u, i) => [u, UNI_RGB[i % UNI_RGB.length]]));
+  uniX = {};
+  if (UNIS.length > 1) {  // ponytail: a cluster spreads about 68 x sqrt(stars) each way; 340 on each side keeps the gap clear
+    const r = UNIS.map(u => 68 * Math.sqrt(nodes.filter(n => n.uni === u).length));
+    let x = 0; UNIS.forEach((u, i) => { uniX[u] = x + r[i]; x += 2 * r[i] + 680; });
+    const mid = (x - 680) / 2; UNIS.forEach(u => uniX[u] -= mid);
+  }
+  const ctl = document.getElementById('ctl'), zm = document.getElementById('zmain');
+  ctl.querySelectorAll('.uni').forEach(b => b.remove());
+  if (UNIS.length > 1) UNIS.forEach((u, i) => {  // one fit button per universe, keys 1..9
+    const b = document.createElement('button'); b.className = 'uni'; b.textContent = u.slice(0, 4);
+    b.title = `Fit the ${u} universe (${i + 1})`; b.onclick = () => fitUni(u); ctl.insertBefore(b, zm);
+  });
+}
+function boxUnis() {  // where each universe's name goes (its top-left corner) and how wide its glow is
+  uniBox = {};
+  if (UNIS.length < 2) return;
+  for (const u of UNIS) {
+    const l = nodes.filter(n => n.uni === u); if (!l.length) continue;
+    const xs = l.map(n => n.p.x), ys = l.map(n => n.p.y), sx = [...xs].sort((a, b) => a - b), sy = [...ys].sort((a, b) => a - b);
+    uniBox[u] = { x: (sx[0] + sx[sx.length - 1]) / 2, y: (sy[0] + sy[sy.length - 1]) / 2, left: sx[Math.floor(sx.length * .05)], top: sy[Math.floor(sy.length * .05)],
+                  r: Math.max(sx[sx.length - 1] - sx[0], sy[sy.length - 1] - sy[0]) / 2 + 40 };  // the 5% cut: a few far stars don't move the name
+  }
+}
 let W = 0, H = 0, dpr = window.devicePixelRatio || 1;
 let nodes = [], edges = [], byId = {}, pos = {}, hiN = new Set(), hiE = new Set();
 // "new since last build" glows at full strength when it appears and fades to nothing over this
@@ -242,6 +290,8 @@ let restore = null;
 try { restore = JSON.parse(sessionStorage.getItem('vaultGraph') || 'null'); sessionStorage.removeItem('vaultGraph'); } catch (e) {}
 let active = {};  // name -> {kind, since, desc} from the agent/skill hooks
 let built = null, view = { x: 0, y: 0, k: 1 }, hover = null, pinned = null, touched = false, dust = [];
+const LAYOUT_V = 2;  // bump when the layout rules change: a reload then lays the sky out again instead of restoring old spots
+if (restore && restore.v !== LAYOUT_V) { restore.pos = {}; restore.view = null; }
 if (restore) { pos = restore.pos || {}; Object.assign(view, restore.view || {}); touched = !!restore.touched; }
 const label = id => { const p = id.split('/'); const f = p.pop().replace(/\.md$/, ''); return f === 'SKILL' ? p.pop() : f; };
 const fmt = d => d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -282,7 +332,7 @@ function legend() {
   }
   { const d = document.createElement('div'), dot = document.createElement('i');
     dot.style.background = dot.style.color = `rgb(${CAT.main.rgb})`; dot.style.width = dot.style.height = '12px';
-    d.appendChild(dot); d.appendChild(document.createTextNode('Claude (main)')); el.appendChild(d);
+    d.appendChild(dot); d.appendChild(document.createTextNode(YOU)); el.appendChild(d);
     d.onclick = () => select(MAIN); }
   const d = document.createElement('div');
   const dot = document.createElement('i'); dot.style.background = `rgb(${HI})`; dot.style.color = `rgb(${HI})`;
@@ -361,11 +411,13 @@ function load(g) {
   });
   byId = {}; nodes.forEach(n => byId[n.id] = n);
   edges = g.edges.map(([a, b, k]) => ({ a: byId[a], b: byId[b], k })).filter(e => e.a && e.b);
-  edges.forEach(e => { e.a.deg++; e.b.deg++; e.ph = hash(e.a.id + e.b.id) * 6.283; });
-  const first = !Object.keys(old).length && !restore;
-  for (const n of nodes) if (n.isNew) {  // a new star is born next to a star it connects to
-    const e = edges.find(e => (e.a === n && pos[e.b.id]) || (e.b === n && pos[e.a.id]));
-    const src = e ? pos[(e.a === n ? e.b : e.a).id] : first ? { x: (Math.random() - .5) * 600, y: (Math.random() - .5) * 450 } : { x: 0, y: 0 };
+  edges.forEach(e => { e.a.deg++; e.b.deg++; e.ph = hash(e.a.id + e.b.id) * 6.283; e.x = e.a.uni !== e.b.uni; });  // x: crosses universes
+  const first = (!Object.keys(old).length && !restore) || fresh > nodes.length / 2;  // mostly new (e.g. notes moved): lay out from scratch
+  placeUnis(g);
+  for (const n of nodes) if (n.isNew) {  // a new star is born next to a star it connects to, else in its own universe
+    const e = !first && edges.find(e => (e.a === n && pos[e.b.id]) || (e.b === n && pos[e.a.id]));
+    const gx = uniX[n.uni] || 0;
+    const src = e ? pos[(e.a === n ? e.b : e.a).id] : first ? { x: gx + (Math.random() - .5) * 600, y: (Math.random() - .5) * 450 } : { x: gx, y: 0 };
     pos[n.id] = { x: src.x + (Math.random() - .5) * 20, y: src.y + (Math.random() - .5) * 20, vx: 0, vy: 0 };
   }
   nodes.forEach(n => { n.p = pos[n.id]; n.spawn = { x: n.p.x, y: n.p.y }; });
@@ -377,6 +429,7 @@ function load(g) {
   hiReason = h.reason || '';
   expireHighlight();
   layout(first ? 450 : fresh ? 150 : 0);
+  boxUnis();
   nodes.forEach(n => { n.from = first ? { x: n.p.x, y: n.p.y } : old[n.id] || n.spawn; n.d = { ...n.from }; });
   morph.t0 = performance.now();
   legend();
@@ -404,12 +457,12 @@ function layout(iters) {
       }
     }
     for (const e of edges) {
-      const p = e.a.p, q = e.b.p, dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1, f = (d - 55) * .03;
+      const p = e.a.p, q = e.b.p, dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1, f = e.x ? 0 : (d - 55) * .03;  // universes never pull each other in
       p.vx += dx / d * f; p.vy += dy / d * f; q.vx -= dx / d * f; q.vy -= dy / d * f;
     }
     for (const n of nodes) {
       const p = n.p;
-      p.vx -= p.x * .006; p.vy -= p.y * .006;
+      p.vx -= (p.x - (uniX[n.uni] || 0)) * .006; p.vy -= p.y * .006;
       const v = Math.hypot(p.vx, p.vy), m = v > 25 ? 25 / v : 1;
       p.x += p.vx * m * a; p.y += p.vy * m * a; p.vx *= .5; p.vy *= .5;
     }
@@ -523,8 +576,16 @@ function draw(t) {
     cx.fillStyle = `rgba(200,230,215,${.15 + .25 * (still ? .5 : (Math.sin(t * s.s + s.p) + 1) / 2)})`;
     cx.fillRect(s.x, s.y, s.r, s.r);
   }
+  for (const [u, b] of Object.entries(uniBox)) {  // each universe: a faint glow and its name at the top-left
+    const [x, y] = S(b), r = b.r * view.k, gr = cx.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, `rgba(${UNI[u]},.07)`); gr.addColorStop(1, `rgba(${UNI[u]},0)`);
+    cx.fillStyle = gr; cx.fillRect(x - r, y - r, 2 * r, 2 * r);
+    const [tx, ty] = S({ x: b.left, y: b.top });
+    cx.font = `bold ${Math.round(Math.max(14, Math.min(32, 24 * view.k)))}px ui-monospace, Consolas, monospace`; cx.textAlign = 'left';
+    cx.fillStyle = `rgba(${UNI[u]},.75)`; cx.fillText(u, tx, Math.max(ty - 26, topH() + 26));  // never under the top bar
+  }
   cx.lineWidth = Math.max(.6, Math.min(1.2, view.k * .8));
-  for (const e of edges) {  // every link drawn plainly; new ones get a fading glow on top below
+  for (const e of edges) if (!e.x) {  // every link inside a universe drawn plainly; new ones get a fading glow on top below
     const [x1, y1] = S(e.a.d), [x2, y2] = S(e.b.d);
     cx.strokeStyle = `rgba(${EDGE},${.16 + .1 * (still ? .5 : (Math.sin(t * .9 + e.ph) + 1) / 2)})`;
     cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
@@ -547,7 +608,7 @@ function draw(t) {
   hiFade = hiN.size ? Math.max(0, Math.min(1, (hiUntil - Date.now()) / (HIGHLIGHT_HOURS * 36e5))) : 0;
   cx.save(); cx.globalAlpha = hiFade;  // the "new" glow fades out over HIGHLIGHT_HOURS
   cx.save(); cx.lineCap = 'round';
-  for (const e of edges) if (e.hi) {
+  for (const e of edges) if (e.hi && !e.x) {
     const [x1, y1] = S(e.a.d), [x2, y2] = S(e.b.d);
     cx.shadowColor = `rgba(${HI},1)`; cx.shadowBlur = 10 + 14 * pulse;
     cx.strokeStyle = `rgba(${HI},${.55 + .45 * pulse})`; cx.lineWidth = 2 + 1.2 * pulse;
@@ -556,7 +617,7 @@ function draw(t) {
   cx.restore();
   cx.font = 'italic 13px ui-monospace, Consolas, monospace'; cx.textAlign = 'center';
   cx.fillStyle = `rgba(${HI},${.7 + .3 * pulse})`;
-  for (const e of edges) if (e.hi) { const [x1, y1] = S(e.a.d), [x2, y2] = S(e.b.d); cx.fillText(e.k, (x1 + x2) / 2, (y1 + y2) / 2 - 8); }
+  for (const e of edges) if (e.hi && !e.x) { const [x1, y1] = S(e.a.d), [x2, y2] = S(e.b.d); cx.fillText(e.k, (x1 + x2) / 2, (y1 + y2) / 2 - 8); }
   for (const id of hiN) {
     const n = byId[id]; if (!n) continue;
     const [x, y] = S(n.d), r = 5 + 2.5 * pulse;
@@ -678,7 +739,7 @@ function drawWork(who, x, y, r, rgb, list, busy, pulse, t, shrink = 1) {
     if (off) { const [sx, sy] = S(n.d); pin(nx, ny, Math.atan2(sy - y, sx - x), label(n.id), n); }
     else { cx.textAlign = 'center'; text(label(n.id), nx, ny + radius(n) + 16); }
   }
-  if (away && shrink === 1) pin(ax, ay, Math.atan2(y - ay, x - ax), who === MAIN ? 'Claude (main)' : label(who.id), who);
+  if (away && shrink === 1) pin(ax, ay, Math.atan2(y - ay, x - ax), who === MAIN ? YOU : label(who.id), who);
   cx.restore();
   if (busy && !still) for (let i = 0; i < 2; i++) {
     const f = (t * .7 + i / 2) % 1;
@@ -707,7 +768,7 @@ function drawMain(t) {
   cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(x, y, radius(MAIN) * .35, 0, 6.3); cx.fill();
   cx.font = 'bold 15px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
   const bg = Object.values(active).filter(a => a.kind === 'agent').length;  // its turn ended, its background agents did not
-  cx.fillText('Claude (main)' + (m ? (m.what === 'idle' ? (bg ? ` · waiting on ${bg} agent${bg > 1 ? 's' : ''}` : ' · idle') : busy ? ' · working' : ' · quiet') : ''), x, y - radius(MAIN) - 14);
+  cx.fillText(YOU + (m ? (m.what === 'idle' ? (bg ? ` · waiting on ${bg} agent${bg > 1 ? 's' : ''}` : ' · idle') : busy ? ' · working' : ' · quiet') : ''), x, y - radius(MAIN) - 14);
 }
 
 // a running agent (or a skill in use) works like the main star: dashed lines to what it touches,
@@ -740,7 +801,7 @@ function drawActive(t) {
     cx.fillStyle = '#fff'; shapePath(n.cat, x, y, r * .35); cx.fill();
     cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.textAlign = 'center'; cx.fillStyle = `rgb(${rgb})`;
     cx.fillText(name + (a.kind === 'agent' ? ' · working' : ' · in use'), x, y - r - 30);
-    const sub2 = sub && a.parent ? `spawned by ${a.parent === 'main' ? 'Claude (main)' : a.parent}` + (a.desc ? ' · ' : '') : '';  // who started it
+    const sub2 = sub && a.parent ? `spawned by ${a.parent === 'main' ? YOU : a.parent}` + (a.desc ? ' · ' : '') : '';  // who started it
     if (sub2 || (a.desc && a.kind === 'agent')) { cx.font = '13px ui-monospace, Consolas, monospace'; cx.fillStyle = '#c9d8d1'; cx.fillText(sub2 + (a.desc || ''), x, y - r - 14); }
   }
 }
@@ -797,10 +858,10 @@ function select(n, center = true, instant = false) {
   if (n.kind !== 'entity' && n !== MAIN) box.appendChild(el('div', 'area: ' + n.repo + (n.type ? ' · type: ' + n.type : '')));
   const tl = taskLinks.get(n.id) || [];  // the board tasks behind the pips: progress, click to open the task
   if (tl.length) box.appendChild(el('div', `board tasks (${tl.length})`, 'sec'));
-  for (const [sec, it] of tl) {
+  for (const [sec, it, u] of tl) {
     const p = prio(it), btn = el('button', (p.done >= 0 ? pips(p.done) + '  ' : '') + `${sec}: ${clean(p.text)}`, 'nb task');
     btn.style.borderLeftColor = `rgb(${SEC[sec]?.[1] || CAT[n.cat].rgb})`; btn.title = 'Open the task';
-    btn.onclick = () => openTask(sec, it);
+    btn.onclick = () => openTask(sec, it, u);
     box.appendChild(btn);
     if (p.done >= 0) box.appendChild(progBar(p.done));
   }
@@ -896,11 +957,13 @@ document.getElementById('zfit').onclick = () => { touched = true; fitAll(); };
 document.getElementById('zhi').onclick = () => { touched = false; select(null); fitHighlight(); };
 const fitMain = () => { if (follow) return setFollow(false); touched = true; select(null); fitTo([MAIN, ...mainTouched], 2.5); setFollow(true); };  // zoom to main + what it works on, then follow it
 document.getElementById('zmain').onclick = fitMain;
+const fitUni = u => { touched = true; select(null); fitTo(nodes.filter(n => n.uni === u), 3); };
 addEventListener('keydown', e => {
   if (e.target.closest?.('input, textarea')) return;  // typing in the task search or a note is not a shortcut
   if (e.key === 'f') { touched = true; fitAll(); }
   if (e.key === 'h') { touched = false; select(null); fitHighlight(); }
   if (e.key === 'm') fitMain();
+  if (/^[1-9]$/.test(e.key) && UNIS[e.key - 1] && UNIS.length > 1) fitUni(UNIS[e.key - 1]);
   if (e.key === '+' || e.key === '=') zoomAt(1.3);
   if (e.key === '-') zoomAt(1 / 1.3);
   if (e.key === 'Escape') { showCat(null); select(null); }
@@ -983,8 +1046,8 @@ function renderLog(log, now) {
   for (const e of log.slice(-30)) if (e.what === 'done' && !active[e.who] && now - e.ts < 300) chip(`${e.who} done ✓`, 'done', e.who);
   const m = last.main;
   const bg = Object.entries(active).filter(([, a]) => a.kind === 'agent').map(([k]) => k);
-  if (m && m.what === 'idle' && bg.length) chip(`main waiting on ${bg.join(', ')}`, 'quiet', 'main');
-  else if (m) chip(m.what === 'idle' ? `main idle ${Math.round(now - m.ts)}s` : now - m.ts < BUSY_CAP ? 'main working' : `main quiet ${Math.round(now - m.ts)}s`,
+  if (m && m.what === 'idle' && bg.length) chip(`YOU waiting on ${bg.join(', ')}`, 'quiet', 'main');
+  else if (m) chip(m.what === 'idle' ? `YOU idle ${Math.round(now - m.ts)}s` : now - m.ts < BUSY_CAP ? 'YOU working' : `YOU quiet ${Math.round(now - m.ts)}s`,
               m.what === 'idle' ? 'idle' : now - m.ts < BUSY_CAP ? 'working' : 'quiet', 'main');
   const newest = log.length ? log[log.length - 1].ts : 0;
   document.getElementById('ago').textContent = newest ? `last event ${Math.round(now - newest)}s ago` : 'no events yet';
@@ -1014,17 +1077,31 @@ let boardSig = '', seenTasks = null, openSec = { Ongoing: true, Next: true, Open
 if (innerWidth <= 900) document.getElementById('board').classList.add('min');
 document.getElementById('boardh').onclick = () => document.getElementById('board').classList.toggle('min');
 const clean = t => t.replace(/\[\[([^\]|]+)(\|[^\]]*)?\]\]/g, '$1').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*`]/g, '');
-function renderBoard(b) {
-  const sig = JSON.stringify(b) + built;  // + built: re-link the progress pips once the graph (re)loads
-  if (!b || sig === boardSig) return;
-  boardSig = sig;
+// one board per universe (one sky: a single board, no tabs); the tab picks which one shows and where New task adds
+let BUNI = '', lastBoards = null;
+try { BUNI = localStorage.getItem('vaultBoard') || ''; } catch (e) {}
+function renderBoard(bs) {
+  if (!bs) return;
+  if (!(BUNI in bs)) BUNI = Object.keys(bs)[0];
+  const sig = JSON.stringify(bs) + built + BUNI;  // + built: re-link the progress pips once the graph (re)loads
+  if (sig === boardSig) return;
+  boardSig = sig; lastBoards = bs;
+  const b = bs[BUNI] || {};
+  const tabs = document.getElementById('btabs'); tabs.innerHTML = '';
+  if (Object.keys(bs).length > 1) for (const u of Object.keys(bs)) {
+    const n = Object.entries(bs[u]).filter(([s]) => s !== 'Done').reduce((a, [, v]) => a + v.length, 0);
+    const t = document.createElement('button'); t.textContent = `${u} (${n})`; t.className = u === BUNI ? 'on' : '';
+    t.setAttribute('role', 'tab'); t.setAttribute('aria-selected', u === BUNI); t.style.setProperty('--u', UNI[u] || HI);
+    t.onclick = () => { BUNI = u; try { localStorage.setItem('vaultBoard', u); } catch (e) {} renderBoard(lastBoards); };
+    tabs.appendChild(t);
+  }
   const prev = seenTasks, now = new Set();
   taskLinks = new Map(); taskProg = new Map();
-  for (const [sec, its] of Object.entries(b)) if (sec !== 'Done') for (const it of its) {
+  for (const [u, ub] of Object.entries(bs)) for (const [sec, its] of Object.entries(ub)) if (sec !== 'Done') for (const it of its) {
     const { text, done } = prio(it), n = /\[\[/.test(text) && nodeFromText(text);
     if (!n) continue;
     if (!taskLinks.has(n.id)) taskLinks.set(n.id, []);
-    taskLinks.get(n.id).push([sec, it]);
+    taskLinks.get(n.id).push([sec, it, u]);
     if (done >= 0) taskProg.set(n.id, Math.max(done, taskProg.get(n.id) ?? 0));
   }
   const box = document.getElementById('boardb'); box.innerHTML = '';
@@ -1060,7 +1137,7 @@ function renderBoard(b) {
       li.appendChild(tag(clean(text), 'txt'));
       const prog = sec === 'Done' ? 100 : done;
       if (prog >= 0) li.appendChild(progBar(prog));
-      li.style.cursor = 'pointer'; li.onclick = () => openTask(sec, it);
+      li.style.cursor = 'pointer'; li.onclick = () => openTask(sec, it, BUNI);
       const key = sec + '|' + it; now.add(key);
       if (prev && !prev.has(key)) { li.classList.add('changed'); d.open = true; }  // new or moved task glows
       if (you && sec !== 'Done') d.open = true;  // never hide something the user has to do
@@ -1154,18 +1231,46 @@ const tag = (t, c) => { const s = document.createElement('span'); s.className = 
 const TOKEN = document.querySelector('meta[name=vault-token]').content;
 let tmTask = null;
 const tmEl = id => document.getElementById(id);
-let BOARD_FILE = '_global/now.md';  // replaced by board_file from /status
-const copyPrompt = (sec, it, note) => `Task from my board (${BOARD_FILE}, ${sec}): ${clean(prio(it).text).trim()} -- Check the memory vault first, then do this task. Ask me before anything public, outward-facing or irreversible, and update the board when it is done.` + (note ? ` -- My note: ${note}` : '');
+let BOARD_FILES = { '': '_global/now.md' };  // replaced by board_files from /status
+const copyPrompt = (sec, it, note, uni = BUNI) => `Task from my board (${BOARD_FILES[uni] || Object.values(BOARD_FILES)[0]}, ${sec}): ${clean(prio(it).text).trim()} -- Check the memory vault first, then do this task. Ask me before anything public, outward-facing or irreversible, and update the board when it is done.` + (note ? ` -- My note: ${note}` : '');
 const noteVal = () => tmEl('tmnote').value.trim();
 async function tmPost(action) {
   const r = await fetch('do', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vault-Token': TOKEN },
-    body: JSON.stringify({ sec: tmTask.sec, text: tmTask.it, note: noteVal(), action }) });
+    body: JSON.stringify({ sec: tmTask.sec, text: tmTask.it, note: noteVal(), action, uni: tmTask.uni }) });
   if (r.status === 403) { tmEl('tmmsg').textContent = 'Graph server restarted. Reloading the page…'; setTimeout(() => location.reload(), 1200); return null; }
   if (!r.ok) { tmEl('tmmsg').textContent = r.status === 404 ? 'This task changed on the board. Close and click it again.' : 'Failed: HTTP ' + r.status; return null; }
   return r.json();
 }
-function openTask(sec, it) {
-  tmTask = { sec, it };
+// new task (top of Tasks) and a free prompt (bottom of Activity): same token and Host checks as the task buttons
+async function postJSON(path, body, msg) {
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vault-Token': TOKEN }, body: JSON.stringify(body) });
+    if (r.status === 403) { msg.textContent = 'Graph server restarted. Reloading the page…'; setTimeout(() => location.reload(), 1200); return null; }
+    if (!r.ok) { msg.textContent = 'Failed: HTTP ' + r.status; return null; }
+    return await r.json();
+  } catch { msg.textContent = 'Graph server is not running. Run: python tools/vault.py ui'; return null; }
+}
+async function newTask(go) {
+  const t = tmEl('ntext'), m = tmEl('nmsg'), text = t.value.trim();
+  if (!text) return t.focus();
+  m.textContent = go ? 'Adding it and opening Claude…' : 'Adding…';
+  const j = await postJSON('new', { text, sec: go ? 'Ongoing' : tmEl('nsec').value, go, uni: BUNI }, m);
+  if (j) { m.textContent = j.note; t.value = ''; poll(); }
+}
+async function askClaude() {
+  const t = tmEl('atext'), m = tmEl('amsg'), text = t.value.trim();
+  if (!text) return t.focus();
+  m.textContent = 'Opening Claude…';
+  const j = await postJSON('ask', { text }, m);
+  if (j) { m.textContent = `Sent: ${j.note}.`; t.value = ''; }
+}
+tmEl('nadd').onclick = () => newTask(false);
+tmEl('ngo').onclick = () => newTask(true);
+tmEl('askgo').onclick = askClaude;
+for (const [id, fn] of [['ntext', () => newTask(false)], ['atext', askClaude]])
+  tmEl(id).addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); fn(); } });
+function openTask(sec, it, uni = BUNI) {
+  tmTask = { sec, it, uni };
   const { pct, you, text } = prio(it), [lvl, rgb] = sev(pct);
   tmEl('tm').querySelector('.box').style.setProperty('--rgb', rgb);
   tmEl('tmsec').textContent = sec;
@@ -1204,7 +1309,7 @@ tmEl('tmx').onclick = closeTask;
 tmEl('tm').onclick = e => { if (e.target.id === 'tm') closeTask(); };
 tmEl('tmnode').onclick = () => { const n = nodeFromText(tmTask.it); closeTask(); select(n); };
 tmEl('tmcopy').onclick = async () => {
-  try { await navigator.clipboard.writeText(copyPrompt(tmTask.sec, tmTask.it, noteVal())); tmEl('tmmsg').textContent = 'Prompt copied. Paste it into Claude.'; }
+  try { await navigator.clipboard.writeText(copyPrompt(tmTask.sec, tmTask.it, noteVal(), tmTask.uni)); tmEl('tmmsg').textContent = 'Prompt copied. Paste it into Claude.'; }
   catch { tmEl('tmmsg').textContent = 'Copy blocked by the browser.'; }
 };
 tmEl('tmgo').onclick = async () => {
@@ -1243,7 +1348,7 @@ async function poll() {
   try {
     const st = await (await fetch('status?' + Date.now(), { cache: 'no-store' })).json();
     if (htmlVer !== null && st.html !== htmlVer) {  // page code changed: reload quietly, same view
-      try { sessionStorage.setItem('vaultGraph', JSON.stringify({ view, pos, touched, pinned: pinned && pinned.id })); } catch (e) {}
+      try { sessionStorage.setItem('vaultGraph', JSON.stringify({ v: LAYOUT_V, view, pos, touched, pinned: pinned && pinned.id })); } catch (e) {}
       return location.reload();
     }
     htmlVer = st.html;
@@ -1251,8 +1356,8 @@ async function poll() {
     renderLog(st.log || [], st.now || Date.now() / 1000);
     SESS = st.sessions || {};
     renderUsage(st.usage);
-    if (st.board_file) BOARD_FILE = st.board_file;
-    renderBoard(st.board);
+    if (st.board_files) BOARD_FILES = st.board_files; else if (st.board_file) BOARD_FILES = { '': st.board_file };
+    renderBoard(st.boards || (st.board && { '': st.board }));
     const names = Object.entries(active).filter(([, v]) => v.kind === 'agent').map(([k]) => k);
     document.getElementById('running').textContent = names.length ? 'running: ' + names.join(', ') : '';
     const g = await (await fetch('graph.json?' + Date.now(), { cache: 'no-store' })).json();

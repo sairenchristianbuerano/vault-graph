@@ -13,7 +13,7 @@
   path <a> <b>            shortest chain of links between two notes or entities (lit up in the UI)
   entity <ABC-123 | owner/repo>   every note that names it
   report                  print graph/GRAPH_REPORT.md
-  task list | task add <section> "text" | task move "<words>" <section>
+  task list | task add <section> "text" | task move "<words>" <section>   (add --<universe> for that board)
   ask <key> "what"        log something Claude had to ask the user; on the 2nd time, suggests a skill
   daily                   run the `daily` commands from vault-graph.json, keep their output for the hook
   setup [--dry-run] [--force]   install the Claude Code hooks (backs up ~/.claude/settings.json first)
@@ -59,14 +59,16 @@ TTL = {"agent": 900, "skill": 60}  # seconds; stale entries expire if a stop eve
 
 def configure(root):
     """Point every path at this vault and load its vault-graph.json."""
-    global ROOT, CFG, ENTITY, IGNORE, REPOS, BOARD, BOARD_REL, PORT, GRAPH, ACTIVITY, SESSION, WMUX_MAP, LOG, DAILY
+    global ROOT, CFG, ENTITY, IGNORE, REPOS, BOARD, BOARD_REL, BOARDS, UNIS, PORT, GRAPH, ACTIVITY, SESSION, WMUX_MAP, LOG, DAILY
     ROOT = os.path.abspath(root)
     CFG = heal.load_config(ROOT)
     ENTITY = [re.compile(p) for p in CFG["entity_patterns"]]
     IGNORE = set(CFG["entity_ignore"])
     REPOS = CFG["repos_dir"].strip("/")
     BOARD_REL = CFG["board"].replace("\\", "/")
-    BOARD = os.path.join(ROOT, BOARD_REL)
+    UNIS = heal.universes(CFG)  # [] = one sky; else the universe folders, left to right on the page
+    BOARDS = {u: os.path.join(ROOT, board_rel(u)) for u in UNIS or [""]}  # one board per universe, never linked
+    BOARD = next(iter(BOARDS.values()))
     PORT = int(os.environ.get("VAULT_GRAPH_PORT") or CFG["port"])
     GRAPH = os.path.join(ROOT, "graph")
     ACTIVITY = os.path.join(GRAPH, "activity.json")
@@ -74,6 +76,16 @@ def configure(root):
     WMUX_MAP = os.path.join(GRAPH, "wmux-sessions.json")   # session id -> the wmux tab (pty) it runs in
     LOG = os.path.join(GRAPH, "activity-log.jsonl")
     DAILY = os.path.join(GRAPH, "daily.json")
+
+
+def board_rel(u=""):
+    return heal.under(u, BOARD_REL)
+
+
+def uni_of(r):
+    """Split vaults only: the universe folder a note sits in, or None for files outside them (see build_graph)."""
+    u = r.split("/")[0]
+    return u if u in UNIS else None
 
 
 configure(heal.ROOT)
@@ -84,6 +96,8 @@ def stem(r):
 
 
 def repo_of(r):
+    if UNIS and r.split("/")[0] in UNIS:
+        r = r.split("/", 1)[1]  # the same layout lives inside each universe
     p = r.split("/")
     if r.startswith(REPOS + "/") and len(p) > REPOS.count("/") + 2:
         return p[REPOS.count("/") + 1]
@@ -127,6 +141,8 @@ def build_graph(notes):
         fm = t[:t.find("\n---", 3)] if t.startswith("---") else ""
         typ = (re.search(r"^\s*type:\s*(\S+)", fm, re.M) or [None, ""])[1]
         nodes[r] = {"kind": "note", "repo": repo_of(r), "type": typ, "desc": heal.summary(t)}
+        if UNIS:
+            nodes[r]["uni"] = uni_of(r)
         txt = plain(t)
         for m in heal.WIKILINK.finditer(txt):
             c = by_stem.get(os.path.basename(m.group(1).strip()).lower(), [])
@@ -139,6 +155,17 @@ def build_graph(notes):
         for e in entities(txt):
             nodes.setdefault(e, {"kind": "entity"})
             edges.add((r, e, "mentions"))
+    if UNIS:  # files outside the universe folders (CLAUDE.md, .claude/agents) join the one they link to most, else the last
+        for r, n in nodes.items():
+            if n["kind"] == "note" and n["uni"] is None:
+                near = Counter(nodes[b if a == r else a].get("uni") for a, b, k in edges if k == "links" and r in (a, b))
+                near.pop(None, None)
+                n["uni"] = near.most_common(1)[0][0] if near else UNIS[-1]
+        # an entity sits in a universe when every note naming it does; else in the first one
+        for e, n in nodes.items():
+            if n["kind"] == "entity":
+                us = {nodes[a]["uni"] for a, b, _ in edges if b == e}
+                n["uni"] = us.pop() if len(us) == 1 else UNIS[0]
     adj = defaultdict(dict)
     for a, b, k in edges:
         adj[a][b] = k
@@ -173,7 +200,7 @@ def build(root, quiet=False, highlight=None):
                 highlight.setdefault("since", old.get("built"))
     with open(gj, "w", encoding="utf-8", newline="\n") as fh:
         json.dump({"built": dt.datetime.now().isoformat(timespec="seconds"), "highlight": highlight,
-                   "nodes": nodes, "edges": edges}, fh, indent=1, sort_keys=True)
+                   "nodes": nodes, "edges": edges, **({"universes": UNIS} if UNIS else {})}, fh, indent=1, sort_keys=True)
     note_ids = [n for n, v in nodes.items() if v["kind"] == "note"]
     link = lambda n: f"[{stem(n)}](../{n})"  # noqa: E731
     deg = {n: len(adj[n]) for n in note_ids}
@@ -380,7 +407,7 @@ def import_auto_memory(root, cfg, home=None):
     for r in load(root):
         vault[stem(r).lower()].append(r)
     skip = {s.lower() for s in am.get("skip", [])}  # names merged, renamed or deleted on purpose
-    repos = cfg["repos_dir"].strip("/")
+    repos = heal.under((heal.universes(cfg) or [""])[0], cfg["repos_dir"])  # split vaults: into the first universe
     new = upd = kept = 0
     for src in sorted(glob.glob(os.path.join(home, ".claude", "projects", "*", "memory", "*.md"))):
         s = stem(src)
@@ -450,7 +477,7 @@ def hook():
             except SystemExit:
                 pass
         hits = buf.getvalue().strip()
-        ctx = (f"Check the memory vault first (vault: {ROOT}). Read {BOARD_REL} for open tasks, check "
+        ctx = (f"Check the memory vault first (vault: {ROOT}). Read {' and '.join(map(board_rel, BOARDS))} for open tasks, check "
                ".claude/skills before asking the user to do something by hand, and run "
                "`python tools/vault.py search|note|entity` for more.")
         if hits and not hits.startswith("no match"):
@@ -635,7 +662,7 @@ def _write_board(path, lines):
         fh.write(text)
 
 
-def task(cmd, args, path=None):
+def task(cmd, args, path=None, tag_session=True):
     """task add <section> "text" | task move "<words>" <section> | task list"""
     path = path or BOARD
     if cmd == "list":
@@ -659,7 +686,7 @@ def task(cmd, args, path=None):
         try:  # remember which Claude session added it, so "Do it in Claude" can resume that session
             with open(SESSION, encoding="utf-8") as fh:
                 sid = json.load(fh)["id"]
-            if "(s:" not in item and time.time() - os.path.getmtime(SESSION) < 3600:
+            if tag_session and "(s:" not in item and time.time() - os.path.getmtime(SESSION) < 3600:
                 item += f" (s:{sid[:8]})"
         except (OSError, ValueError, KeyError):
             pass
@@ -707,16 +734,16 @@ def mark_done(sec, text, note, path=None):
     _write_board(path, lines)
 
 
-def task_prompt(sec, text, check=False):
+def task_prompt(sec, text, check=False, uni=""):
     """Same wording as copyPrompt() in graph.html. check=True: only verify whether the task is done."""
     plain_text = re.sub(r"\[\[([^\]|]+)(\|[^\]]*)?\]\]", r"\1", strip_tags(text))
     if check:
-        return (f"Check if this task from my board is done ({BOARD_REL}, {sec}): {plain_text} -- Check the memory vault first. "
+        return (f"Check if this task from my board is done ({board_rel(uni)}, {sec}): {plain_text} -- Check the memory vault first. "
                 "Verify it against live evidence: pull request or issue state, sent mail or drafts, tickets, release registries, dates. "
                 "If it is done, move it to Done with a one-line evidence note. "
                 "If not, refresh its status text and [done N%] and tell me in one line what is still missing. "
                 "Change nothing outside the board: no emails, comments, pushes or ticket edits.")
-    return (f"Task from my board ({BOARD_REL}, {sec}): {plain_text} -- Check the memory vault first, then do this task. "
+    return (f"Task from my board ({board_rel(uni)}, {sec}): {plain_text} -- Check the memory vault first, then do this task. "
             "Ask me before anything public, outward-facing or irreversible, and update the board when it is done.")
 
 
@@ -827,7 +854,7 @@ _SESS = {}
 
 def board_sessions():
     """Session info for every (s:xxxxxxxx) on the board, for the page labels. 30 s cache; the page polls every 2 s."""
-    ids = set(re.findall(r"\(s:([0-9a-f]{8})\)", json.dumps(read_board())))
+    ids = set(re.findall(r"\(s:([0-9a-f]{8})\)", json.dumps([read_board(b) for b in BOARDS.values()])))
     for i in ids:
         if i not in _SESS or time.time() - _SESS[i][0] > 30:
             _SESS[i] = (time.time(), find_session(i))
@@ -947,6 +974,7 @@ def launch_claude(prompt, session=None):
 # ---------------- live graph UI ----------------
 def serve(root, idle=None):
     """Tiny local server for tools/graph.html + graph/graph.json. Stops after `idle` seconds unused."""
+    import html
     import http.server
     import secrets
     import threading
@@ -971,32 +999,53 @@ def serve(root, idle=None):
                 self.send_error(500)
 
         def _post(self):
-            """POST /do {sec, text, note, action}: open Claude on that board task, check if it is done, or mark it done.
-            Only exact tasks on the board are accepted. POST /run {id, input}: run a vault agent or skill in a new Claude session."""
+            """POST /do {sec, text, note, action, uni}: open Claude on that board task, check if it is done, or mark it done.
+            Only exact tasks on the board are accepted. POST /run {id, input}: run a vault agent or skill in a new Claude session.
+            POST /new {text, sec, go, uni}: add a task (go: and open Claude on it). POST /ask {text}: a new Claude session."""
             ok_host = self.headers.get("Host", "") in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
-            if self.path not in ("/do", "/run") or not ok_host or self.headers.get("X-Vault-Token") != token:
+            if self.path not in ("/do", "/run", "/new", "/ask") or not ok_host or self.headers.get("X-Vault-Token") != token:
                 return self.send_error(403)
             try:
                 req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 20000)))
-                key = req["id"] if self.path == "/run" else (req["sec"], req["text"])
+                key = (req["id"] if self.path == "/run" else " ".join(str(req["text"]).split()) if self.path in ("/new", "/ask")
+                       else (req["sec"], req["text"]))
             except (ValueError, KeyError, TypeError):
                 return self.send_error(400)
             if self.path == "/run":
                 return self._run(str(key), " ".join(str(req.get("input") or "").split())[:2000])
+            uni = req.get("uni") if req.get("uni") in BOARDS else next(iter(BOARDS))
+            if self.path == "/ask":  # the Activity prompt box: a new Claude session with the user's own words
+                if not key:
+                    return self.send_error(400)
+                note = launch_claude(key[:2000] + " -- Check the memory vault first. Ask me before anything public, outward-facing or irreversible.")
+                log_event("main", "Ask", f"{note}: {key[:60]}")
+                return self._json({"note": note})
+            if self.path == "/new":  # the New task box: add to the board, and with go, open Claude on it
+                sec = req.get("sec") if req.get("sec") in ("Ongoing", "Next", "Open", "Pending") else "Next"
+                if not key:
+                    return self.send_error(400)
+                task("add", [sec, key[:1000]], BOARDS[uni], tag_session=False)  # typed on the page: no session owns it yet
+                where = f"{uni} {sec}".strip()
+                log_event("main", "New task", f"{where}: {key[:60]}")
+                if not req.get("go"):
+                    return self._json({"note": f"added to {where}"})
+                note = launch_claude(task_prompt(sec, key[:1000], uni=uni))
+                log_event("main", "Launch", note + ": " + key[:60])
+                return self._json({"note": f"added to {where}; {note}"})
             sec, text = key
-            if text not in read_board().get(sec, []):
+            if text not in read_board(BOARDS[uni]).get(sec, []):
                 return self.send_error(404, "not a task on the board")
             user_note = " ".join(str(req.get("note") or "").split())[:2000]  # one line: it may land in the board
             if req.get("action") == "done":
-                mark_done(sec, text, user_note)
+                mark_done(sec, text, user_note, BOARDS[uni])
                 log_event("main", "Done", text[:80])
                 return self._json({"note": "moved to Done"})
             if req.get("action") == "check":  # a fresh session: a check needs no history, and must not edit the task's own session
-                note = launch_claude(task_prompt(sec, text, check=True) + (f" -- My note: {user_note}" if user_note else ""))
+                note = launch_claude(task_prompt(sec, text, check=True, uni=uni) + (f" -- My note: {user_note}" if user_note else ""))
                 log_event("main", "Check", note + ": " + text[:60])
                 return self._json({"note": note})
             m = re.search(r"\(s:([0-9a-f]{8})\)", text)
-            prompt = task_prompt(sec, text) + (f" -- My note: {user_note}" if user_note else "")
+            prompt = task_prompt(sec, text, uni=uni) + (f" -- My note: {user_note}" if user_note else "")
             note = launch_claude(prompt, find_session(m[1]) if m else None)
             log_event("main", "Launch", note + ": " + text[:60])
             self._json({"note": note})
@@ -1029,8 +1078,10 @@ def serve(root, idle=None):
             try:
                 if p == "/status":
                     body, ctype = json.dumps({**state, "html": os.path.getmtime(page), "activity": read_activity(),
-                                              "log": read_log(), "now": time.time(), "board": read_board(),
-                                              "board_file": BOARD_REL, "sessions": board_sessions(),
+                                              "log": read_log(), "now": time.time(), "board": read_board(BOARD),
+                                              "board_file": board_rel(next(iter(BOARDS))), "sessions": board_sessions(),
+                                              "boards": {u: read_board(b) for u, b in BOARDS.items()},
+                                              "board_files": {u: board_rel(u) for u in BOARDS},
                                               "usage": usage_summary()}).encode(), "application/json"
                 elif p in files:
                     if p == "/graph.json":
@@ -1038,7 +1089,8 @@ def serve(root, idle=None):
                     with open(files[p][0], "rb") as fh:
                         body, ctype = fh.read(), files[p][1]
                     if p == "/":
-                        body = body.replace(b"__VAULT_TOKEN__", token.encode())
+                        body = body.replace(b"__VAULT_TOKEN__", token.encode()).replace(
+                            b"__VAULT_AI__", html.escape(str(CFG.get("ai_name") or "Claude"), quote=True).encode())
                 else:
                     return self.send_error(404)
             except OSError:
@@ -1111,7 +1163,7 @@ def show_ui(root):
 def ask(root, key, what):
     """Log a request made to the user. The second time the same key appears, suggest a skill."""
     key = re.sub(r"[^a-z0-9]+", "-", key.lower()).strip("-")
-    p = os.path.join(root, CFG["global_dir"], "asks-log.md")
+    p = os.path.join(root, heal.under((UNIS or [""])[0], CFG["global_dir"]), "asks-log.md")
     if not os.path.exists(p):
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "w", encoding="utf-8", newline="\n") as fh:
@@ -1209,7 +1261,7 @@ def setup(root, dry=False, force=False):
     else:
         text = (f"\n\n## Memory vault\n\nMy long-term notes live in the vault at `{root}`. Before a task, check it: "
                 f"the prompt hook adds the top matches; for more, run `python tools/vault.py search \"<words>\"` "
-                f"there and read `{BOARD_REL}` for open tasks.\n")
+                f"there and read `{'` and `'.join(map(board_rel, BOARDS))}` for open tasks.\n")
         print("  append:" + text.replace("\n", "\n  | "))
         if not dry:
             os.makedirs(os.path.dirname(cm), exist_ok=True)
@@ -1350,6 +1402,31 @@ def selftest():
             daily()
         dj = read_daily()["jobs"][0]
         assert dj["ok"] and dj["lines"] == [str(i) for i in range(5, 15)], dj
+        assert "uni" not in nodes["repos/acme-api/memory/token-rotation.md"] and UNIS == [], "one sky must stay unchanged"
+    with tempfile.TemporaryDirectory() as d:  # two universes: same layout inside each, one board each, nothing shared
+        def w(r, t):
+            os.makedirs(os.path.dirname(os.path.join(d, r)), exist_ok=True)
+            with open(os.path.join(d, r), "w", encoding="utf-8") as fh:
+                fh.write(t)
+        w("vault-graph.json", json.dumps({"universes": ["work", "personal"]}))
+        w("work/repos/acme-api/memory/token-rotation.md", "Rotate monthly. ABC-123. See [[tomatoes]].\n")
+        w("personal/repos/garden/memory/tomatoes.md", "Water daily. XYZ-77.\n")
+        w("CLAUDE.md", "Read HOME first.\n")
+        w(".claude/agents/release-helper.md", "Ships releases. Uses [[token-rotation]].\n")
+        configure(d)
+        nodes, edges, adj = build(d, quiet=True)
+        assert nodes["work/repos/acme-api/memory/token-rotation.md"]["uni"] == "work", "work note"
+        assert nodes["personal/repos/garden/memory/tomatoes.md"]["uni"] == "personal", "personal note"
+        assert nodes["CLAUDE.md"]["uni"] == "personal", "a top-level file with no links joins the last universe"
+        assert nodes[".claude/agents/release-helper.md"]["uni"] == "work", "a top-level file joins the universe it links to"
+        assert nodes["ABC-123"]["uni"] == "work" and nodes["XYZ-77"]["uni"] == "personal", "entity universe"
+        assert nodes["work/repos/acme-api/memory/token-rotation.md"]["repo"] == "acme-api", "area inside a universe"
+        assert json.load(open(os.path.join(d, "graph", "graph.json"), encoding="utf-8"))["universes"] == ["work", "personal"]
+        assert set(BOARDS) == {"work", "personal"} and BOARDS["personal"].replace(os.sep, "/").endswith("personal/_global/now.md")
+        with contextlib.redirect_stdout(io.StringIO()):
+            task("add", ["next", "repot the basil"], BOARDS["personal"])
+        assert read_board(BOARDS["personal"])["Next"] == ["repot the basil"] and not read_board(BOARDS["work"])["Next"], "boards linked"
+        assert "(personal/_global/now.md, Next)" in task_prompt("Next", "repot the basil", uni="personal"), "prompt names its board"
     configure(heal.ROOT)
     print("selftest passed")
 
@@ -1386,7 +1463,9 @@ def main(a):
     elif cmd == "daily":
         daily()
     elif cmd == "task":
-        task(rest[0] if rest else "list", rest[1:])
+        pick = [u for u in UNIS if f"--{u}" in rest]  # task --personal add next "..."
+        rest = [x for x in rest if x.lstrip("-") not in UNIS or not x.startswith("--")]
+        task(rest[0] if rest else "list", rest[1:], BOARDS[pick[0]] if pick else BOARD)
     elif cmd == "activity":
         activity(args[0] if args else "")
     elif cmd == "serve":

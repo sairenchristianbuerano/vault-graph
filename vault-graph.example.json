@@ -8,6 +8,11 @@
   "repos_dir": "repos",
   "global_dir": "_global",
 
+  "universes": [],
+  "_universes": "[] = one sky (default). A list such as [\"work\", \"personal\"] splits the vault into side-by-side universes, each with its own <universe>/<repos_dir>, <universe>/<global_dir> and board. Order is left to right on the page.",
+  "ai_name": "Claude",
+  "_ai_name": "The centre star reads YOU (ai_name).",
+
   "entity_patterns": [
     "\\b[A-Z][A-Z0-9]+-\\d+\\b",
     "(?<=github\\.com/)[A-Za-z0-9-]+/[A-Za-z0-9._-]*[A-Za-z0-9]"

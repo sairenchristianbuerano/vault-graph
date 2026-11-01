@@ -12,7 +12,8 @@ Drop one `tools/` folder into an Obsidian (or any Markdown) vault. You get a sel
 - **Self-healing indexes.** `heal.py` rebuilds `HOME.md` and one `_index.md` per repo, adds missing front-matter, repoints renamed wikilinks, and reports broken links and duplicate names.
 - **Secret scan.** Tokens and keys in notes are reported, and an optional git pre-commit hook blocks the commit.
 - **Search without an AI.** `search`, `note`, `related`, `path` and `entity` answer from the files in milliseconds. `path` also lights up the chain in the UI.
-- **Task board.** A plain Markdown file with five sections, priorities, progress bars, a "NEED YOU" glow for things only a person can do, and "CONTINUE #1..3" picks for what to do next. A task that links a note with `[[note]]` puts five progress pips beside that star, and clicking the star lists its tasks.
+- **Task board.** A plain Markdown file with five sections, priorities, progress bars, a "NEED YOU" glow for things only a person can do, and "CONTINUE #1..3" picks for what to do next. A task that links a note with `[[note]]` puts five progress pips beside that star, and clicking the star lists its tasks. Type a new task at the top of the board, or a free prompt for Claude under the activity panel.
+- **One sky or two universes.** Keep everything in one graph, or [split it](#one-sky-or-two-universes) into universes such as work and personal: side by side on the page, never linked, one board each.
 - **Do it in Claude.** Click a task and Claude Code opens on it: it resumes the session the task came from, forks it if that session is open right now, or types the task into the live session when it runs in [wmux](#do-it-in-claude-and-wmux).
 - **Claude Code hooks.** Before each prompt, the top vault matches are added to Claude's context. Tool calls, subagents and skills show up live in the activity panel and as pulsing stars. A star they work on outside the view gets a marker on the frame edge; click it to fly there.
 - **Usage in the top bar.** Token counts from your local Claude Code transcripts. Plan limits (5-hour and weekly %) are available as an [opt-in](#security-notes).
@@ -63,6 +64,38 @@ repos/<repo>/work/      plans, runbooks, reports
 ```
 
 Folder names are configurable. Notes outside this layout still show up in the graph.
+
+### One sky or two universes
+
+By default everything is one sky: one graph, one board. If you would rather keep, say, work and personal apart, list them as universes in `vault-graph.json`:
+
+```json
+{ "universes": ["work", "personal"] }
+```
+
+Then the same layout lives inside each universe folder:
+
+```
+CLAUDE.md                     shared rules only (optional)
+work/CLAUDE.md                rules for work notes (optional)
+work/_global/now.md           the work board
+work/_global/memory/
+work/repos/<repo>/memory/
+personal/CLAUDE.md            rules for personal notes (optional)
+personal/_global/now.md       the personal board
+personal/repos/<repo>/memory/
+```
+
+![Two universes: work on the left, personal on the right, a board tab for each](docs/screenshots/universes.png)
+
+- **Page:** each universe is its own cluster, left to right in the order you list them, named at its top-left. Links between universes stay in a star's details but are not drawn and do not pull the clusters together. The centre star (YOU) moves between them to whatever Claude is working on. There is a fit button per universe (keys `1`, `2`, ...).
+- **Boards:** one per universe (`<universe>/<board>`), with a tab for each on the Tasks panel. A new task goes to the tab you are on. From the command line: `python tools/vault.py task --personal add next "..."`.
+- **Indexes:** `heal.py` builds `HOME.md` with a section per universe, and the repo and global indexes inside each one.
+- **Files outside the universe folders** (a top-level `CLAUDE.md`, `.claude/agents/`) join the universe they link to most, or the last one in the list if they link to nothing.
+- **CLAUDE.md per universe:** each universe can keep its own `<universe>/CLAUDE.md` next to a top-level one that only holds the shared rules. Claude Code loads a nested `CLAUDE.md` on its own when it works on files in that folder.
+- **Auto-memory** imported by `sync` lands in the first universe; move a note and later syncs update it where it is.
+
+It is a personal choice, and you can change your mind. To split, create the universe folders, move `repos/`, `_global/` and the board into the right one, add the setting and run `python tools/vault.py sync`. To merge back, move them out again and remove the setting. Wikilinks keep working either way; relative markdown links between moved notes need a fix, and `heal.py` lists any that broke.
 
 ### Commands
 
@@ -152,6 +185,8 @@ Click a task, then **Do it in Claude**. The server:
 - if the task has `(s:...)` and that transcript exists: resumes it with `--resume`, or forks it with `--fork-session` when it was active in the last 10 minutes; if the transcript is over 20 MB it starts a fresh session with a pointer instead;
 - starts `claude --permission-mode <mode>` in the session's folder (or `launcher.cwd`, default the vault).
 
+**New task** at the top of the board adds a task to the tab you are on; **Add and do it** also opens Claude on it. The **prompt box** under the activity panel opens a new Claude session with whatever you type.
+
 **Type prompt** adds your own note to the prompt. **Mark done** moves the task to Done with your note. **Check if it's done** starts a fresh Claude session that checks live evidence for that one task, then moves it to Done or refreshes its status. **Copy prompt** puts the same prompt on the clipboard.
 
 **Where it opens**
@@ -170,6 +205,8 @@ Optional `vault-graph.json` at the vault root. Every key has a safe default; see
 | `board` | `_global/now.md` | Task board file. |
 | `repos_dir` | `repos` | Folder with one subfolder per repo. |
 | `global_dir` | `_global` | Rules that apply everywhere; also holds `asks-log.md`. |
+| `universes` | `[]` | `[]` is one sky. A list such as `["work", "personal"]` splits the vault: `repos_dir`, `global_dir` and `board` are then read inside each universe folder. See [One sky or two universes](#one-sky-or-two-universes). |
+| `ai_name` | `Claude` | The centre star reads "YOU (`ai_name`)". |
 | `entity_patterns` | issue keys, github.com owner/repo | Regexes whose matches become shared entity stars. |
 | `entity_ignore` | `UTF-8`, `SHA-256`, ... | Matches to skip. |
 | `auto_memory.import` | `true` | Import Claude Code auto-memory on `sync`. |
@@ -217,7 +254,7 @@ Run it every morning:
 ## Security notes
 
 - **Localhost only.** The server binds to `127.0.0.1`, stops after 30 minutes without requests, and serves only the page, `graph.json` and a status endpoint.
-- **Launcher guard.** `POST /do` needs the random token embedded in the page (other sites cannot read it), a `127.0.0.1` or `localhost` Host header, and the exact text of a task on the board. The prompt is passed through a file, never through shell parsing.
+- **Launcher guard.** `POST /do` needs the random token embedded in the page (other sites cannot read it), a `127.0.0.1` or `localhost` Host header, and the exact text of a task on the board. `POST /new` (the New task box) and `POST /ask` (the prompt box under the activity panel) need the same token and Host header. The prompt is passed through a file, never through shell parsing.
 - **Permission mode is `default`.** Launched sessions ask before running tools, as Claude Code normally does. You can set `launcher.permission_mode` to `bypassPermissions`. **Warning:** that lets the launched session run any command and edit any file without asking. The prompt asks Claude to check with you before anything public or irreversible, but nothing enforces it. Only turn it on for a vault and machine where you accept that.
 - **Plan usage is opt-in (`"plan_usage": true`).** It reads the OAuth access token from `~/.claude/.credentials.json` on each refresh (every 5 minutes) and sends it only to `https://api.anthropic.com/api/oauth/usage`. The token is never stored, logged or sent anywhere else. That endpoint is undocumented and may change or stop working; the top bar then falls back to local token counts. With it off (the default), the credentials file is never opened.
 - **Activity log.** Tool-call details are cut to 120 characters, and anything that looks like a token is replaced with `[redacted]`.
