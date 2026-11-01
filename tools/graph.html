@@ -641,7 +641,7 @@ function draw(t) {
   cx.restore();  // end of the fading glow
   cx.font = 'bold 14px ui-monospace, Consolas, monospace'; cx.fillStyle = '#d9e6e0';
   for (const n of nodes) {
-    const show = n.sun || hiN.has(n.id) || n === hover || (view.k > 1.8 && n.kind === 'note');
+    const show = hiN.has(n.id) || n === hover || (view.k > 1.8 && n.kind === 'note');
     if (!show || (pinned && n !== hover) || ((n.cat === 'agent' || n.cat === 'skill') && active[label(n.id)])) continue;  // working ones have their own label
     const [x, y] = S(n.d);
     cx.fillText(label(n.id), x, y + (n.sun ? radius(n) + 18 : hiN.has(n.id) ? 24 : -10));
