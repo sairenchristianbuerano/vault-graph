@@ -244,7 +244,7 @@ let touchTs = {}, linkAnim = {};
 let retract = null, lastIdleTs;  // lastIdleTs: newest main idle seen; undefined until the first poll, so a page load does not pan
 function panToMain() {  // centre the main star at the current zoom; leaves the camera alone while a star's details are open
   if (pinned || !nodes.length) return;
-  glideTo(MAIN.p.x, MAIN.p.y, view.k);
+  if (mainTouched.length) glideTo(MAIN.p.x, MAIN.p.y, view.k); else glideTo(0, 0, view.k);  // idle: it is heading home
 }  // {list, t0}: the main star's lines pulling back in after it went idle  // 'actor|note id' -> newest tool call seen on it; -> when its connect animation started
 const catOf = n => Object.values(BOARD_FILES).includes(n.id) ? 'sun' : n.kind === 'entity' ? 'entity' : /(^|\/)agents\//.test(n.id) ? 'agent' : /(^|\/)skills\//.test(n.id) ? 'skill'
   : n.id.includes('/memory/') ? 'memory' : n.id.includes('/work/') || n.id.includes('/runbooks/') ? 'work' : 'note';
@@ -511,9 +511,10 @@ function tick(now) {
     view.y = cam.from.y + (cam.to.y - cam.from.y) * e;
     if (u >= 1) cam = null;
   }
-  if (mainTouched.length) {
-    const cxw = mainTouched.reduce((a, n) => a + n.d.x, 0) / mainTouched.length;
-    const cyw = mainTouched.reduce((a, n) => a + n.d.y, 0) / mainTouched.length - 70;
+  {  // working: drift toward what it works on; idle: glide home to the middle of the sky, where a page load puts it
+    const n = mainTouched.length;
+    const cxw = n ? mainTouched.reduce((a, m) => a + m.d.x, 0) / n : 0;
+    const cyw = n ? mainTouched.reduce((a, m) => a + m.d.y, 0) / n - 70 : 0;
     const f = still ? 1 : .04;
     MAIN.d.x += (cxw - MAIN.d.x) * f; MAIN.d.y += (cyw - MAIN.d.y) * f;
     MAIN.p.x = MAIN.d.x; MAIN.p.y = MAIN.d.y;
