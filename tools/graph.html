@@ -1232,14 +1232,14 @@ function renderUsage(u) {
   const upd = ` · updated ${new Date(u.scanned * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   if (p.five_hour || p.seven_day) {
     const at = s => new Date(Date.parse(s) + 30000);  // round to the nearest minute: 21:59:59.8 shows as 10:00 PM, like Claude
-    const rs = p.five_hour ? ` (resets ${at(p.five_hour.resets).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, ${left(p.five_hour.resets)} left)` : '';
-    const rw = p.seven_day ? ` (resets ${at(p.seven_day.resets).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}, ${left(p.seven_day.resets)} left)` : '';
+    const rs = p.five_hour?.resets ? ` (resets ${at(p.five_hour.resets).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, ${left(p.five_hour.resets)} left)` : '';
+    const rw = p.seven_day?.resets ? ` (resets ${at(p.seven_day.resets).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}, ${left(p.seven_day.resets)} left)` : '';
     el.append('plan ', part('5-hour', 0, p.five_hour?.pct ?? 0), rs, ' · ', part('weekly', 0, p.seven_day?.pct ?? 0), rw, upd);
   } else {
     el.append('usage ', part('today', u.day), ' · ', part('7 days', u.week), upd, p.error ? ` · plan %: ${p.error}` : '');
   }
-  el.title = (p.five_hour ? `Plan limits (same as /usage):\n5-hour window ${p.five_hour.pct}%, resets ${t(p.five_hour.resets)}\n` : '') +
-    (p.seven_day ? `Weekly ${p.seven_day.pct}%, resets ${t(p.seven_day.resets)}\n\n` : '') +
+  el.title = (p.five_hour ? `Plan limits (same as /usage):\n5-hour window ${p.five_hour.pct}%${p.five_hour.resets ? ', resets ' + t(p.five_hour.resets) : ''}\n` : '') +
+    (p.seven_day ? `Weekly ${p.seven_day.pct}%${p.seven_day.resets ? ', resets ' + t(p.seven_day.resets) : ''}\n\n` : '') +
     `Claude Code tokens on this PC (input + output + cache writes), all projects and subagents:\n` +
     `today ${u.day.toLocaleString()} (+${fmtTok(u.day_cache)} cache reads), last 7 days ${u.week.toLocaleString()} (+${fmtTok(u.week_cache)} cache reads).\n` +
     `Refreshes every 5 min.`;
