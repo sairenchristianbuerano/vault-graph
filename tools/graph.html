@@ -593,7 +593,7 @@ function draw(t) {
     cx.fillStyle = gr; cx.fillRect(x - r, y - r, 2 * r, 2 * r);
     const [tx, ty] = S({ x: b.left, y: b.top });
     cx.font = `bold ${Math.round(Math.max(14, Math.min(32, 24 * view.k)))}px ui-monospace, Consolas, monospace`; cx.textAlign = 'left';
-    if (SET.uniNames) { cx.fillStyle = `rgba(${UNI[u]},.75)`; cx.fillText(u, tx, Math.max(ty - 26, topH() + 26)); }  // never under the top bar
+    if (SET.uniNames) { cx.fillStyle = `rgba(${UNI[u]},.75)`; cx.fillText(u, Math.max(tx, vr.x0 + 6), Math.max(ty - 26, vr.y0 + 20)); }  // kept inside the visible graph area
   }
   cx.lineWidth = Math.max(.6, Math.min(1.2, view.k * .8));
   for (const e of edges) if (!e.x) {  // every link inside a universe drawn plainly; new ones get a fading glow on top below
@@ -656,11 +656,17 @@ function draw(t) {
 
 // glowing frame round the graph: steady when Claude is idle, rolling "mountain" waves when it works;
 // colour = 5-hour plan usage (green < 70%, yellow 70-89%, red 90%+), same scale as the top bar
+// usage colour: 0% green -> 100% red, a new shade every percent (hue 130 -> 0); returns "r,g,b"
+const pctRgb = p => {
+  const h = 130 * (1 - Math.min(100, Math.max(0, p)) / 100) / 60, l = .55, c = (1 - Math.abs(2 * l - 1)) * .65;
+  const x = c * (1 - Math.abs(h % 2 - 1)), m = l - c / 2, [r, g, b] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : [0, c, x];
+  return [r, g, b].map(v => Math.round((v + m) * 255)).join(',');
+};
 let planPct = null;
 function drawFrame(t) {
   const { x0, y0, x1, y1 } = vr;
   if (x1 - x0 < 80 || y1 - y0 < 80) return;
-  const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : planPct >= 90 ? '255,90,90' : planPct >= 70 ? '230,200,80' : '79,192,141';
+  const rgb = planPct == null ? CAT.main?.rgb || '79,192,141' : pctRgb(planPct);  // same green-to-red as the top bar
   const m = lastLog.length ? lastLog.filter(e => e.who === 'main').pop() : null;
   const busy = !still && ((m && m.what !== 'idle' && (Date.now() / 1000 - m.ts) < BUSY_CAP) || Object.values(active).some(a => a.kind === 'agent'));
   // each edge is a light bar: white-hot core fading out at both ends, light spilling inward onto the graph.
@@ -1210,10 +1216,9 @@ function renderUsage(u) {
   el.innerHTML = '';
   const part = (label, n, pct) => {
     const s = document.createElement('span'); s.className = 'u';
-    const lvl = pct == null ? '' : pct >= 90 ? ' hot' : pct >= 70 ? ' warm' : '';
-    s.className += lvl;
+    if (pct != null) s.style.color = `rgb(${pctRgb(pct)})`;
     s.textContent = `${label} ${pct == null ? fmtTok(n) + ' tok' : pct + '%'}`;
-    if (pct != null) { const b = document.createElement('i'); b.style.width = Math.min(100, pct) + '%'; s.appendChild(b); }
+    if (pct != null) { const b = document.createElement('i'); b.style.width = Math.min(100, pct) + '%'; b.style.background = s.style.color; s.appendChild(b); }
     return s;
   };
   const p = u.plan || {}, t = d => new Date(d).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
